@@ -191,3 +191,26 @@ Tool sources: [NASM](https://www.nasm.us/),
 CPU reference: [Intel system programming manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
 QEMU supplies the BIOS and VBE font; no kernel implementation from another OS
 is embedded in Aurora.
+
+## Bootable ISO artifact
+
+Run `./make-iso.ps1` to create `build/aurora.iso`. This is a bootable Aurora
+BIOS hybrid disk artifact: it preserves the exact 512-byte boot sectors and
+GPT layout, so the BIOS loader and kernel remain byte-for-byte compatible.
+The generated `build/aurora.iso.json` records the SHA-256 and launch command.
+
+```powershell
+./make-iso.ps1
+tools/qemu/qemu-system-x86_64.exe -drive format=raw,file=build/aurora.iso -m 1G -smp 4
+```
+
+The ISO boots the kernel and desktop by itself. Aurora’s development volume is
+accessed through ATA PIO, so attach the development disk as a second drive when
+you need ext2/FAT32 storage, GCC, or networking tools:
+
+```powershell
+tools/qemu/qemu-system-x86_64.exe `
+  -drive format=raw,file=build/aurora.iso `
+  -drive format=raw,file=build/development.img,if=none,id=development `
+  -device virtio-blk-pci,drive=development,disable-modern=on -m 1G -smp 4
+```
