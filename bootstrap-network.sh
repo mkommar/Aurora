@@ -31,6 +31,13 @@ cp lib/.libs/libcurl.a /netroot/lib/
 cp -R include/curl /netroot/include/
 cp /build/cacert.pem /netroot/etc/ssl/cert.pem
 cp /build/mbedtls-3.6.7.tar.bz2 /build/curl-8.22.0.tar.gz /netroot/src/
+# Retain configure results for the same pinned musl ABI, but no object files.
+make clean
+find . -name Makefile -exec sed -i 's@/netroot@/usr@g' {} \;
+cd /build/mbedtls-3.6.7
+make GEN_FILES= clean
+cd /build
+tar -czf /netroot/src/network-build-tree.tar.gz mbedtls-3.6.7 curl-8.22.0
 tar -czf /build/network-bootstrap.tar.gz -C /netroot .
 base64 /build/network-bootstrap.tar.gz > /build/result.b64
 /usr/bin/curl -fsS --data-binary @/build/result.b64 http://10.0.2.2:8879/result

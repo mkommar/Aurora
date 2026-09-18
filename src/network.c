@@ -16,7 +16,7 @@ typedef struct {uint16_t family,port;uint32_t ip;unsigned char zero[8];} NetAddr
 typedef struct {
     int type,connecting,connected,error,eof,read_closed,write_closed;
     struct tcp_pcb *tcp;struct udp_pcb *udp;struct pbuf *received;
-    struct pbuf *datagrams[UDP_PENDING];NetAddress senders[UDP_PENDING];unsigned head,count;
+    struct pbuf *datagrams[UDP_PENDING];NetAddress senders[UDP_PENDING];unsigned head,count,queued_bytes;
 } NetSocket;
 static NetSocket sockets[NET_SOCKETS];
 static struct netif interface;
@@ -35,7 +35,7 @@ static int parse_address(const void *address,unsigned length,ip_addr_t *ip,uint1
     ip_addr_set_ip4_u32(ip,a->ip);*port=lwip_ntohs(a->port);return 0;
 }
 static void copy_address(void *out,unsigned *length,const NetAddress *a){
-    if(!out||!length)return;unsigned n=*length<sizeof(*a)?*length:sizeof(*a);memcpy(out,a,n);*length=sizeof(*a);
+    if(!length)return;unsigned n=*length<sizeof(*a)?*length:sizeof(*a);if(out)memcpy(out,a,n);*length=sizeof(*a);
 }
 static err_t transmit(struct netif *n,struct pbuf *p){
     (void)n;unsigned char packet[1518];if(p->tot_len>sizeof(packet))return ERR_BUF;
@@ -61,7 +61,7 @@ void network_input(const void *packet,unsigned length){
     if(interface.input(p,&interface)!=ERR_OK){pbuf_free(p);network_rx_drops++;}
 }
 void network_tick(void){if(initialized)sys_check_timeouts();}
-static void tcp_error(void *argument,err_t error){NetSocket *s=argument;s->tcp=0;s->error=s->connecting&&error==ERR_RST?111:error_number(error);s->connecting=0;s->eof=1;}
+static void tcp_error(void *argument,err_t error){NetSocket *s=argument;s->tcp=0;s->error=error==ERR_CLSD?0:s->connecting&&error==ERR_RST?111:error_number(error);s->connecting=0;s->eof=1;}
 static err_t connected(void *argument,struct tcp_pcb *pcb,err_t error){
     NetSocket *s=argument;(void)pcb;s->connecting=0;s->error=error_number(error);s->connected=error==ERR_OK;
     if(s->connected)network_connections++;return ERR_OK;
@@ -74,9 +74,9 @@ static err_t receive_tcp(void *argument,struct tcp_pcb *pcb,struct pbuf *p,err_t
 }
 static void receive_udp(void *argument,struct udp_pcb *pcb,struct pbuf *p,const ip_addr_t *ip,uint16_t port){
     NetSocket *s=argument;(void)pcb;if(!p)return;
-    if(s->count==UDP_PENDING||s->read_closed){pbuf_free(p);network_rx_drops++;return;}
+    if(s->count==UDP_PENDING||s->read_closed||p->tot_len>65536-s->queued_bytes){pbuf_free(p);network_rx_drops++;return;}
     unsigned tail=(s->head+s->count)%UDP_PENDING;s->datagrams[tail]=p;
-    s->senders[tail]=(NetAddress){.family=2,.port=lwip_htons(port),.ip=ip_addr_get_ip4_u32(ip)};s->count++;
+    s->senders[tail]=(NetAddress){.family=2,.port=lwip_htons(port),.ip=ip_addr_get_ip4_u32(ip)};s->count++;s->queued_bytes+=p->tot_len;
 }
 int network_socket(int type,int protocol){
     if(!initialized)return -100;
@@ -130,7 +130,7 @@ long network_recv(int handle,void *data,size_t size,unsigned flags,void *address
     }
     if(!s->count)return s->error?-s->error:-11;struct pbuf *p=s->datagrams[s->head];unsigned total=p->tot_len,n=size<total?(unsigned)size:total;
     if(n)pbuf_copy_partial(p,data,(uint16_t)n,0);copy_address(address,length,&s->senders[s->head]);
-    if(!(flags&2)){pbuf_free(p);s->datagrams[s->head]=0;s->head=(s->head+1)%UDP_PENDING;s->count--;}
+    if(!(flags&2)){s->queued_bytes-=total;pbuf_free(p);s->datagrams[s->head]=0;s->head=(s->head+1)%UDP_PENDING;s->count--;}
     return flags&0x20?total:n;
 }
 unsigned network_readiness(int handle){

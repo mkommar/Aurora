@@ -31,4 +31,5 @@ try:
     except BaseException:process.terminate();process.wait();raise
     text=(root/'builder.log').read_text(errors='replace');print(text[-4000:])
     assert code==0 and 'AURORA_NETWORK_BOOTSTRAP_COMPLETE' in text
+    (root/'manifest.json').write_text(json.dumps({'sha256':hashlib.sha256((root/'network-bootstrap.tar.gz').read_bytes()).hexdigest(),'sources':lock,'compiler':'pinned native musl GCC 11.2.1','recipe_sha256':hashlib.sha256(Path('bootstrap-network.sh').read_bytes()).hexdigest()},indent=2))
 finally:server.shutdown()

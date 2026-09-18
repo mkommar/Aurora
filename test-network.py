@@ -1,22 +1,25 @@
-"""Run GCC, compilation, linking and generated applications inside Aurora.
-Uses isolated disk copies and QMP port 4446. No host C compiler is invoked.
-"""
+"""Exercise Aurora networking on disposable disks and loopback-only fixtures."""
 import importlib.util,json,shutil,subprocess,time,struct,argparse,re
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');parser.add_argument('--cpus',type=int,default=1);parser.add_argument('--rebuild-musl',action='store_true');parser.add_argument('--continue-musl',action='store_true');parser.add_argument('--resume',action='store_true');parser.add_argument('--folder',default='build/network-tests');parser.add_argument('--qmp-port',type=int,default=4450);parser.add_argument('--script');parser.add_argument('--intx',action='store_true');parser.add_argument('--accel',choices=['tcg','whpx'],default='tcg');args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
+parser=argparse.ArgumentParser()
+parser.add_argument('--disk',default='build/development.img')
+parser.add_argument('--cpus',type=int,choices=range(1,9),default=1)
+parser.add_argument('--resume',action='store_true')
+parser.add_argument('--folder',default='build/network-tests')
+parser.add_argument('--qmp-port',type=int,default=4450)
+parser.add_argument('--script')
+parser.add_argument('--intx',action='store_true')
+parser.add_argument('--rebuild',action='store_true')
+parser.add_argument('--accel',choices=['tcg','whpx'],default='tcg')
+args=parser.parse_args();args.virtio=True
 folder=Path(args.folder);folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img');shutil.copyfile('build/kernel.elf',folder/'kernel.elf')
 if not args.resume:shutil.copyfile(args.disk,folder/'toolchain.img')
 from image_access import put_ext2_files
-import tarfile
-files={}
-with tarfile.open('tools/network-bootstrap/network-bootstrap.tar.gz') as archive:
-    for entry in archive:
-        if entry.isfile():files['/'+entry.name.removeprefix('./')]=archive.extractfile(entry).read()
-files['/etc/resolv.conf']=b'nameserver 10.0.2.3\noptions timeout:2 attempts:2\n'
-files['/etc/hosts']=b'127.0.0.1 localhost\n'
+from network_artifacts import files as network_files
+files=network_files()
 from network_test_fixture import start
 servers,fixture_files=start(folder)
 files.update(fixture_files)
@@ -81,7 +84,11 @@ try:
     boot()
     wait(lambda:'NET: DHCP' in log(),60)
     out=command('chmod 755 /bin/curl');check('curl executable', 'Application exited: 0' in out)
-    out=command('bash /work/net-test.sh',seconds=240)
+    if args.rebuild:
+        out=command('bash /work/rebuild-network.sh',seconds=5400)
+        print(out[-6000:],flush=True)
+        check('curl and Mbed TLS rebuilt inside Aurora','AURORA_NETWORK_REBUILT_INSIDE_AURORA' in out and 'Application exited: 0' in out)
+    out=command('bash /work/net-test.sh',seconds=360)
     print(out,flush=True)
     for marker in re.findall(r'^(?:PASS[^\r\n]*|AURORA_NETWORK_ABI_PASS)$',out,re.M):results.append(marker)
     check('network script completes','AURORA_NETWORK_TEST_COMPLETE' in out and 'Application exited: 0' in out)

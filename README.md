@@ -1,4 +1,4 @@
-# Aurora OS 0.2 — microkernel
+# Aurora OS 0.2 â€” microkernel
 
 An original, bootable x86-64 hobby OS with a graphical desktop. The kernel now
 handles memory protection, scheduling, traps, IPC, and capability checks.
@@ -19,7 +19,7 @@ then `./demo`. Compilation and linking happen inside Aurora. See
 [Native GCC guide](NATIVE-GCC.md) for source editing, installation, and limits.
 GNU Bash, Make and the source-bootstrap workflow are described in
 [Development foundations](FOUNDATIONS.md), including the remaining work in
-steps 1–7. GNU Make can now rebuild and install itself inside Aurora.
+steps 1â€“7. GNU Make can now rebuild and install itself inside Aurora.
 Musl POSIX threads use shared address spaces and futex synchronization.
 The launcher now starts four CPUs; use `-Cpus 1` for a single-CPU boot.
 ELF interpreters, PIE applications and shared-library loading are supported.
@@ -178,8 +178,9 @@ diagnostics go beside the selected image. `tools-qmp.py` supports `capture NAME`
 
 This is a small OS with microkernel-style service isolation and an initial
 in-kernel storage implementation. Native applications use a BIOS-backed page
-allocator and musl's dynamic linker; networking and automatic service restart
-remain unimplemented. The separate SDK runtime supplies a fixed 128 KiB heap. The terminal and notes
+allocator and musl's dynamic linker. The development profile includes VirtIO-net,
+IPv4/DHCP, DNS, and curl with verified TLS; see [NETWORK.md](NETWORK.md).
+Automatic service restart remains unimplemented. The separate SDK runtime supplies a fixed 128 KiB heap. The terminal and notes
 share the desktop process. Scheduling is
 preemptive, but PS/2 input still uses polling and can consume a host CPU core.
 It targets BIOS QEMU with one to eight CPUs, 128 MiB RAM (1 GiB for GCC) and standard VGA, not UEFI or
