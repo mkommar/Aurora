@@ -1,0 +1,537 @@
+{
+  "scenes": [
+    {
+      "time": 0.0007863000500947237,
+      "name": "boot"
+    },
+    {
+      "time": 4.303751200030092,
+      "name": "isolation"
+    },
+    {
+      "time": 10.289415100007318,
+      "name": "gui"
+    },
+    {
+      "time": 17.160143700020853,
+      "name": "notes"
+    },
+    {
+      "time": 24.503936300054193,
+      "name": "mouse"
+    },
+    {
+      "time": 30.575319600000512,
+      "name": "preemption"
+    },
+    {
+      "time": 37.7544025000534,
+      "name": "result"
+    }
+  ],
+  "samples": [
+    {
+      "time": 0.021680700010620058,
+      "timer_ticks": 0,
+      "ipc_messages": 0,
+      "task_preemptions": 0
+    },
+    {
+      "time": 0.5596506000147201,
+      "timer_ticks": 46,
+      "ipc_messages": 5,
+      "task_preemptions": 37
+    },
+    {
+      "time": 1.0934414000366814,
+      "timer_ticks": 99,
+      "ipc_messages": 5,
+      "task_preemptions": 90
+    },
+    {
+      "time": 1.6194034000509419,
+      "timer_ticks": 151,
+      "ipc_messages": 8,
+      "task_preemptions": 138
+    },
+    {
+      "time": 2.159471700026188,
+      "timer_ticks": 205,
+      "ipc_messages": 10,
+      "task_preemptions": 190
+    },
+    {
+      "time": 2.6853012000210583,
+      "timer_ticks": 258,
+      "ipc_messages": 11,
+      "task_preemptions": 240
+    },
+    {
+      "time": 3.226410900009796,
+      "timer_ticks": 312,
+      "ipc_messages": 14,
+      "task_preemptions": 291
+    },
+    {
+      "time": 3.7582042000140063,
+      "timer_ticks": 365,
+      "ipc_messages": 14,
+      "task_preemptions": 344
+    },
+    {
+      "time": 4.288060699997004,
+      "timer_ticks": 418,
+      "ipc_messages": 17,
+      "task_preemptions": 394
+    },
+    {
+      "time": 4.816266100038774,
+      "timer_ticks": 460,
+      "ipc_messages": 20,
+      "task_preemptions": 433
+    },
+    {
+      "time": 5.362497800029814,
+      "timer_ticks": 514,
+      "ipc_messages": 43,
+      "task_preemptions": 463
+    },
+    {
+      "time": 5.891877500049304,
+      "timer_ticks": 567,
+      "ipc_messages": 44,
+      "task_preemptions": 516
+    },
+    {
+      "time": 6.4168625000165775,
+      "timer_ticks": 620,
+      "ipc_messages": 47,
+      "task_preemptions": 565
+    },
+    {
+      "time": 6.961231100023724,
+      "timer_ticks": 674,
+      "ipc_messages": 47,
+      "task_preemptions": 620
+    },
+    {
+      "time": 7.487787600024603,
+      "timer_ticks": 727,
+      "ipc_messages": 50,
+      "task_preemptions": 667
+    },
+    {
+      "time": 8.019273500016425,
+      "timer_ticks": 780,
+      "ipc_messages": 50,
+      "task_preemptions": 720
+    },
+    {
+      "time": 8.56240550003713,
+      "timer_ticks": 834,
+      "ipc_messages": 53,
+      "task_preemptions": 771
+    },
+    {
+      "time": 9.086248600040562,
+      "timer_ticks": 887,
+      "ipc_messages": 53,
+      "task_preemptions": 823
+    },
+    {
+      "time": 9.63197670003865,
+      "timer_ticks": 941,
+      "ipc_messages": 56,
+      "task_preemptions": 874
+    },
+    {
+      "time": 10.159747800033074,
+      "timer_ticks": 994,
+      "ipc_messages": 56,
+      "task_preemptions": 925
+    },
+    {
+      "time": 10.690535200003069,
+      "timer_ticks": 1047,
+      "ipc_messages": 72,
+      "task_preemptions": 963
+    },
+    {
+      "time": 11.220610000018496,
+      "timer_ticks": 1100,
+      "ipc_messages": 94,
+      "task_preemptions": 995
+    },
+    {
+      "time": 11.753078000037931,
+      "timer_ticks": 1153,
+      "ipc_messages": 114,
+      "task_preemptions": 1031
+    },
+    {
+      "time": 12.294047100003809,
+      "timer_ticks": 1207,
+      "ipc_messages": 134,
+      "task_preemptions": 1067
+    },
+    {
+      "time": 12.82588640000904,
+      "timer_ticks": 1261,
+      "ipc_messages": 159,
+      "task_preemptions": 1096
+    },
+    {
+      "time": 13.354505100054666,
+      "timer_ticks": 1313,
+      "ipc_messages": 180,
+      "task_preemptions": 1126
+    },
+    {
+      "time": 13.896665300009772,
+      "timer_ticks": 1367,
+      "ipc_messages": 197,
+      "task_preemptions": 1159
+    },
+    {
+      "time": 14.429257800045889,
+      "timer_ticks": 1420,
+      "ipc_messages": 217,
+      "task_preemptions": 1192
+    },
+    {
+      "time": 14.957353000005241,
+      "timer_ticks": 1473,
+      "ipc_messages": 234,
+      "task_preemptions": 1222
+    },
+    {
+      "time": 15.479913800023496,
+      "timer_ticks": 1525,
+      "ipc_messages": 243,
+      "task_preemptions": 1258
+    },
+    {
+      "time": 16.022652500018012,
+      "timer_ticks": 1579,
+      "ipc_messages": 243,
+      "task_preemptions": 1313
+    },
+    {
+      "time": 16.54810140002519,
+      "timer_ticks": 1632,
+      "ipc_messages": 246,
+      "task_preemptions": 1361
+    },
+    {
+      "time": 17.091053000011016,
+      "timer_ticks": 1686,
+      "ipc_messages": 246,
+      "task_preemptions": 1416
+    },
+    {
+      "time": 17.61816320003709,
+      "timer_ticks": 1739,
+      "ipc_messages": 264,
+      "task_preemptions": 1449
+    },
+    {
+      "time": 18.160344500036445,
+      "timer_ticks": 1793,
+      "ipc_messages": 286,
+      "task_preemptions": 1482
+    },
+    {
+      "time": 18.692735200049356,
+      "timer_ticks": 1846,
+      "ipc_messages": 308,
+      "task_preemptions": 1517
+    },
+    {
+      "time": 19.217633899999782,
+      "timer_ticks": 1899,
+      "ipc_messages": 329,
+      "task_preemptions": 1549
+    },
+    {
+      "time": 19.746448200021405,
+      "timer_ticks": 1952,
+      "ipc_messages": 350,
+      "task_preemptions": 1581
+    },
+    {
+      "time": 20.28985840000678,
+      "timer_ticks": 2006,
+      "ipc_messages": 374,
+      "task_preemptions": 1619
+    },
+    {
+      "time": 20.82785470003728,
+      "timer_ticks": 2060,
+      "ipc_messages": 396,
+      "task_preemptions": 1648
+    },
+    {
+      "time": 21.361936400004197,
+      "timer_ticks": 2113,
+      "ipc_messages": 418,
+      "task_preemptions": 1679
+    },
+    {
+      "time": 21.88816470000893,
+      "timer_ticks": 2166,
+      "ipc_messages": 425,
+      "task_preemptions": 1722
+    },
+    {
+      "time": 22.41707300004782,
+      "timer_ticks": 2219,
+      "ipc_messages": 428,
+      "task_preemptions": 1770
+    },
+    {
+      "time": 22.947071000002325,
+      "timer_ticks": 2272,
+      "ipc_messages": 428,
+      "task_preemptions": 1823
+    },
+    {
+      "time": 23.489565399999265,
+      "timer_ticks": 2326,
+      "ipc_messages": 431,
+      "task_preemptions": 1874
+    },
+    {
+      "time": 24.013899100013077,
+      "timer_ticks": 2378,
+      "ipc_messages": 431,
+      "task_preemptions": 1927
+    },
+    {
+      "time": 24.55753890000051,
+      "timer_ticks": 2433,
+      "ipc_messages": 437,
+      "task_preemptions": 1975
+    },
+    {
+      "time": 25.08244620001642,
+      "timer_ticks": 2485,
+      "ipc_messages": 438,
+      "task_preemptions": 2026
+    },
+    {
+      "time": 25.626806700020097,
+      "timer_ticks": 2540,
+      "ipc_messages": 441,
+      "task_preemptions": 2077
+    },
+    {
+      "time": 26.154159200028516,
+      "timer_ticks": 2592,
+      "ipc_messages": 469,
+      "task_preemptions": 2107
+    },
+    {
+      "time": 26.68633769999724,
+      "timer_ticks": 2646,
+      "ipc_messages": 495,
+      "task_preemptions": 2137
+    },
+    {
+      "time": 27.226041400048416,
+      "timer_ticks": 2700,
+      "ipc_messages": 496,
+      "task_preemptions": 2189
+    },
+    {
+      "time": 27.755551900016144,
+      "timer_ticks": 2753,
+      "ipc_messages": 499,
+      "task_preemptions": 2238
+    },
+    {
+      "time": 28.2982447000104,
+      "timer_ticks": 2807,
+      "ipc_messages": 522,
+      "task_preemptions": 2271
+    },
+    {
+      "time": 28.82438440003898,
+      "timer_ticks": 2859,
+      "ipc_messages": 531,
+      "task_preemptions": 2314
+    },
+    {
+      "time": 29.36163920001127,
+      "timer_ticks": 2913,
+      "ipc_messages": 534,
+      "task_preemptions": 2364
+    },
+    {
+      "time": 29.896246100019198,
+      "timer_ticks": 2967,
+      "ipc_messages": 534,
+      "task_preemptions": 2417
+    },
+    {
+      "time": 30.42345760000171,
+      "timer_ticks": 3019,
+      "ipc_messages": 537,
+      "task_preemptions": 2466
+    },
+    {
+      "time": 30.94967150001321,
+      "timer_ticks": 3072,
+      "ipc_messages": 552,
+      "task_preemptions": 2505
+    },
+    {
+      "time": 31.49354570003925,
+      "timer_ticks": 3126,
+      "ipc_messages": 573,
+      "task_preemptions": 2535
+    },
+    {
+      "time": 32.01901150000049,
+      "timer_ticks": 3179,
+      "ipc_messages": 584,
+      "task_preemptions": 2577
+    },
+    {
+      "time": 32.55791670002509,
+      "timer_ticks": 3233,
+      "ipc_messages": 587,
+      "task_preemptions": 2627
+    },
+    {
+      "time": 33.087490600009914,
+      "timer_ticks": 3286,
+      "ipc_messages": 587,
+      "task_preemptions": 2680
+    },
+    {
+      "time": 33.613866100029554,
+      "timer_ticks": 3338,
+      "ipc_messages": 590,
+      "task_preemptions": 2729
+    },
+    {
+      "time": 34.157431500032544,
+      "timer_ticks": 3393,
+      "ipc_messages": 590,
+      "task_preemptions": 2783
+    },
+    {
+      "time": 34.683216500037815,
+      "timer_ticks": 3445,
+      "ipc_messages": 593,
+      "task_preemptions": 2832
+    },
+    {
+      "time": 35.22732750000432,
+      "timer_ticks": 3500,
+      "ipc_messages": 593,
+      "task_preemptions": 2886
+    },
+    {
+      "time": 35.753698700049426,
+      "timer_ticks": 3552,
+      "ipc_messages": 596,
+      "task_preemptions": 2935
+    },
+    {
+      "time": 36.292697600030806,
+      "timer_ticks": 3606,
+      "ipc_messages": 598,
+      "task_preemptions": 2988
+    },
+    {
+      "time": 36.824521300033666,
+      "timer_ticks": 3659,
+      "ipc_messages": 599,
+      "task_preemptions": 3038
+    },
+    {
+      "time": 37.350260100036394,
+      "timer_ticks": 3712,
+      "ipc_messages": 601,
+      "task_preemptions": 3087
+    },
+    {
+      "time": 37.89445140003227,
+      "timer_ticks": 3766,
+      "ipc_messages": 606,
+      "task_preemptions": 3136
+    },
+    {
+      "time": 38.42396030004602,
+      "timer_ticks": 3819,
+      "ipc_messages": 609,
+      "task_preemptions": 3184
+    },
+    {
+      "time": 38.950087500037625,
+      "timer_ticks": 3872,
+      "ipc_messages": 609,
+      "task_preemptions": 3236
+    },
+    {
+      "time": 39.493122300016694,
+      "timer_ticks": 3926,
+      "ipc_messages": 612,
+      "task_preemptions": 3287
+    },
+    {
+      "time": 40.02405800000997,
+      "timer_ticks": 3979,
+      "ipc_messages": 612,
+      "task_preemptions": 3340
+    },
+    {
+      "time": 40.55009940004675,
+      "timer_ticks": 4032,
+      "ipc_messages": 615,
+      "task_preemptions": 3388
+    },
+    {
+      "time": 41.09306610003114,
+      "timer_ticks": 4086,
+      "ipc_messages": 615,
+      "task_preemptions": 3443
+    },
+    {
+      "time": 41.618779200012796,
+      "timer_ticks": 4139,
+      "ipc_messages": 618,
+      "task_preemptions": 3492
+    },
+    {
+      "time": 42.162719500018284,
+      "timer_ticks": 4193,
+      "ipc_messages": 618,
+      "task_preemptions": 3547
+    },
+    {
+      "time": 42.69270980003057,
+      "timer_ticks": 4246,
+      "ipc_messages": 621,
+      "task_preemptions": 3596
+    },
+    {
+      "time": 43.21800809999695,
+      "timer_ticks": 4299,
+      "ipc_messages": 621,
+      "task_preemptions": 3648
+    },
+    {
+      "time": 43.757466400042176,
+      "timer_ticks": 4353,
+      "ipc_messages": 624,
+      "task_preemptions": 3697
+    }
+  ],
+  "fps": 15,
+  "duration": 43.93049290002091,
+  "capture": "Live QEMU QMP screendump, real-time; editorial overlays added separately.",
+  "encoded_frames": 659,
+  "encoded_duration": 43.93333333333333
+}

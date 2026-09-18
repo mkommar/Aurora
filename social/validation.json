@@ -1,0 +1,10 @@
+{
+  "duration_seconds": 43.93333333333333,
+  "frames": 659,
+  "fps": 15,
+  "full_decode": "passed for all three MP4 files",
+  "checks": {
+    "microkernel": 28,
+    "gui": 12
+  }
+}

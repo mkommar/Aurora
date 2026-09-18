@@ -1,0 +1,32 @@
+{
+  "passed": [
+    "All deliberate faults were contained",
+    "Invalid syscall buffers and capabilities rejected",
+    "Desktop started despite faulty peers",
+    "Every process has a distinct page-table root",
+    "Kernel-memory and foreign-memory access produce page faults",
+    "Direct port I/O produces a general-protection fault",
+    "Executing stack data produces a page fault",
+    "Writing executable code produces a page fault",
+    "Invalid opcode terminates only its process",
+    "Production services remain fault-free",
+    "Process 0: code is user RX; stack is user RW/NX",
+    "Process 0: kernel and foreign RAM are supervisor-only",
+    "Process 0: stack guard is unmapped",
+    "Process 0: bootstrap information is read-only",
+    "Process 1: code is user RX; stack is user RW/NX",
+    "Process 1: kernel and foreign RAM are supervisor-only",
+    "Process 1: stack guard is unmapped",
+    "Process 1: bootstrap information is read-only",
+    "Process 2: code is user RX; stack is user RW/NX",
+    "Process 2: kernel and foreign RAM are supervisor-only",
+    "Process 2: stack guard is unmapped",
+    "Process 2: bootstrap information is read-only",
+    "Shared surface: desktop writes, display reads, input has no access",
+    "Only display has a user framebuffer mapping",
+    "Services have made IPC deliveries",
+    "A non-yielding process was forcibly preempted",
+    "Timer and scheduler continue after faults",
+    "Input to desktop IPC still works after faults"
+  ]
+}

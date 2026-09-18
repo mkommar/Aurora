@@ -1,0 +1,30 @@
+PASS: All deliberate faults were contained
+PASS: Invalid syscall buffers and capabilities rejected
+PASS: Desktop started despite faulty peers
+PASS: Every process has a distinct page-table root
+PASS: Kernel-memory and foreign-memory access produce page faults
+PASS: Direct port I/O produces a general-protection fault
+PASS: Executing stack data produces a page fault
+PASS: Writing executable code produces a page fault
+PASS: Invalid opcode terminates only its process
+PASS: Production services remain fault-free
+PASS: Process 0: code is user RX; stack is user RW/NX
+PASS: Process 0: kernel and foreign RAM are supervisor-only
+PASS: Process 0: stack guard is unmapped
+PASS: Process 0: bootstrap information is read-only
+PASS: Process 1: code is user RX; stack is user RW/NX
+PASS: Process 1: kernel and foreign RAM are supervisor-only
+PASS: Process 1: stack guard is unmapped
+PASS: Process 1: bootstrap information is read-only
+PASS: Process 2: code is user RX; stack is user RW/NX
+PASS: Process 2: kernel and foreign RAM are supervisor-only
+PASS: Process 2: stack guard is unmapped
+PASS: Process 2: bootstrap information is read-only
+PASS: Shared surface: desktop writes, display reads, input has no access
+PASS: Only display has a user framebuffer mapping
+PASS: Services have made IPC deliveries
+PASS: A non-yielding process was forcibly preempted
+PASS: Timer and scheduler continue after faults
+PASS: Input to desktop IPC still works after faults
+C:\Users\mahes\OneDrive\Documentos\ChatGPT\QEMU 64-bit OS\build\microkernel-isolation-tested.png
+28 microkernel checks passed.

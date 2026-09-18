@@ -1,0 +1,17 @@
+PASS: VM is running
+PASS: CPU executes in 64-bit long mode with NX enabled
+PASS: Terminal receives keyboard command
+PASS: Terminal selected
+PASS: Clear command resets output
+PASS: About command produces output
+C:\Users\mahes\OneDrive\Documentos\ChatGPT\QEMU 64-bit OS\build\test-terminal.png
+PASS: Notes supports typing and backspace
+PASS: Notes retained across app switches
+C:\Users\mahes\OneDrive\Documentos\ChatGPT\QEMU 64-bit OS\build\test-notes.png
+PASS: Mouse changes palette
+PASS: Title bar drag moves window
+C:\Users\mahes\OneDrive\Documentos\ChatGPT\QEMU 64-bit OS\build\test-settings.png
+PASS: Window close works
+PASS: Dock reopens welcome
+C:\Users\mahes\OneDrive\Documentos\ChatGPT\QEMU 64-bit OS\build\test-desktop.png
+12 integration checks passed.

@@ -1,0 +1,16 @@
+{
+  "passed": [
+    "VM is running",
+    "CPU executes in 64-bit long mode with NX enabled",
+    "Terminal receives keyboard command",
+    "Terminal selected",
+    "Clear command resets output",
+    "About command produces output",
+    "Notes supports typing and backspace",
+    "Notes retained across app switches",
+    "Mouse changes palette",
+    "Title bar drag moves window",
+    "Window close works",
+    "Dock reopens welcome"
+  ]
+}
