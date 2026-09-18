@@ -76,7 +76,7 @@ resulting framebuffer mapping and passes a small bootstrap descriptor.
 | `0x10000` onward | Kernel plus embedded boot images; supervisor-only |
 | `0x70000` | Firmware font source, copied into desktop bootstrap data |
 | Below `0x90000` | Early boot stack |
-| `0x100000�0x1fffff` | Sixteen 64 KiB kernel stacks, each with a 4 KiB unmapped guard |
+| `0x100000–0x1fffff` | Sixteen 64 KiB kernel stacks, each with a 4 KiB unmapped guard |
 | `0x200000 + PID * 0x10000` | Private page-table structures for each process |
 | Virtual `0x400000–0x5fffff` | Per-process private code, data, boot info, stack |
 | Virtual `0x5d0000–0x5d1fff` | Read-only bootstrap descriptor and font |
@@ -238,7 +238,7 @@ are user-space apps, but are not mutually isolated from one another.
 The native development environment uses 1 GiB QEMU RAM and a GPT VirtIO disk
 (or the original ATA toolchain disk). Its 13 normal application slots share
 the legacy application slot pool. Native virtual ranges are
-`0x400000–0x83fffff`, backed by individually allocated E820 physical pages.
+`0x400000–0x203fffff`, backed by individually allocated E820 physical pages.
 Page tables are at `0x0a000000` in 1088 KiB strides and development-volume
 metadata at `0x08400000`. Supervisor aliases above 4 GiB expose each native
 address space to the kernel without requiring contiguous physical allocation.

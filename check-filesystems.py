@@ -12,8 +12,8 @@ script='''#!/bin/sh
 set -eu
 apk add --no-cache e2fsprogs dosfstools
 modprobe virtio_blk
-e2fsck -f -n /dev/vda1
-fsck.fat -n /dev/vda2
+if e2fsck -f -n /dev/vda1; then echo AURORA_EXT2_CHECK_OK; else exit 1; fi
+if fsck.fat -n /dev/vda2; then echo AURORA_FAT32_CHECK_OK; else exit 1; fi
 echo AURORA_FILESYSTEM_CHECKS_PASSED
 '''
 (root/'bootstrap-gnu.sh').write_bytes(script.encode())
@@ -29,5 +29,5 @@ try:
     try:code=process.wait(timeout=300)
     except BaseException:process.terminate();process.wait();raise
     output=logfile.read_text(errors='replace');print(output[-6000:])
-    if code or 'AURORA_FILESYSTEM_CHECKS_PASSED' not in output or 'Fix? no' in output:raise SystemExit('Filesystem validation failed')
+    if code or not all(marker in output for marker in ['AURORA_EXT2_CHECK_OK','AURORA_FAT32_CHECK_OK','AURORA_FILESYSTEM_CHECKS_PASSED']) or 'Fix? no' in output:raise SystemExit('Filesystem validation failed')
 finally:server.shutdown();server.server_close()

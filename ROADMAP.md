@@ -1,6 +1,6 @@
 # Aurora: 20 remaining action items
 
-Updated 2026-09-17. This replaces the earlier list. Status for items 1–3 is recorded below; the remaining entries are planned work. Retain Aurora's original kernel, ext2 for
+Updated 2026-09-17. This replaces the earlier list. Status for items 1â€“3 is recorded below; the remaining entries are planned work. Retain Aurora's original kernel, ext2 for
 development, FAT32 for exchange, and the preference for reusable GNU code.
 
 Already demonstrated: native GCC builds applications; GNU Make rebuilds and
