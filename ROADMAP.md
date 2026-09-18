@@ -14,7 +14,8 @@ now is downloading, configuring, compiling and installing source inside Aurora.
    IOMMU/DMA isolation, interrupt-driven ATA and moving storage into a service.
 2. **Complete build-critical POSIX and C-runtime support.** Implemented:
    poll/select, blocking waits, shared-VM musl pthreads, TLS, futex wait/wake/
-   requeue, robust mutex cleanup and shared descriptor/filesystem state.
+   requeue, robust mutex cleanup and shared descriptor/filesystem state. A small
+   musl fork/thread-exit fix is compiled and installed inside Aurora.
    Remaining: dynamic linking, full signal/job-control semantics, broader
    pthread APIs and upstream configure compatibility. See [validation](THREADS.md).
 3. **Scale process memory further.** Implemented: 512 MiB address spaces,

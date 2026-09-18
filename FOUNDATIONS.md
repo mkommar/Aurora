@@ -99,8 +99,9 @@ the upstream xattr module; its license remains applicable.
 
 `test-native-gcc.py` exercises compilation, generated programs, shared file
 offsets, pipe seeking, protected mappings, memory residency, page reclamation,
-signals, child processes and reboot
-persistence. `test-development.py` exercises ext2/FAT32 operations, GNU tools,
+signals, child processes, shared-memory pthreads, robust cleanup, COW and reboot
+persistence. The small musl fork/thread-exit backport is built inside Aurora;
+its source recipe and rollback are described in [Thread validation](THREADS.md). `test-development.py` exercises ext2/FAT32 operations, GNU tools,
 interactive Bash, GNU text pipelines, compressed archive round trips and native
 Make rebuilding. Both use isolated disk copies.
 `check-filesystems.py` attaches the selected image read-only to a disposable

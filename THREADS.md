@@ -52,7 +52,8 @@ python test-kernel-regressions.py --nm PATH_TO_LLVM_NM
 Run VM suites sequentially, especially with the polling ATA fallback. Tests use
 disposable disk copies and compile `tests/native-foundations.c` with GCC running
 inside Aurora. They leave the user's development disk unchanged. The native
-suite saves its pre-reboot transcript in `build/native-tests/foundations-serial.log`.
+suite defaults to the patched development image and saves its pre-reboot
+transcript in `build/ext2-tests/foundations-serial.log`.
 The development suites save IRQ/wait counters and JSON results in
 `build/development-tests` and `build/development-intx-tests`.
 
@@ -62,6 +63,47 @@ threads, isolated TLS, shared descriptor closure, join, robust owner death,
 synchronization, leader-exit lifetime, poll/select and signals, shared anonymous
 futexes, and eight children sharing a 192 MiB COW mapping. It checks both user
 writes and kernel reads into COW memory.
+
+## Pinned musl backport
+
+The original toolchain's `_Fork` queried its new TID without registering the
+thread-exit futex. A child that creates a worker and then calls `pthread_exit`
+could therefore leave that worker blocked during exit. This matches the
+[upstream reproducer and proposed fix](https://www.openwall.com/lists/musl/2023/06/01/3).
+The default development image backports that one-line fix from pinned musl
+1.2.2 source: `SYS_gettid` becomes `SYS_set_tid_address` with
+`&__thread_list_lock` as its argument.
+
+`backport-musl.sh` compiles `_Fork.lo` with GCC **inside Aurora**, verifies layout
+assertions against the existing x86-64 ABI, and replaces only that archive member
+using GNU ar/ranlib. The original archive is retained at
+`/lib/libc.a.before-thread-fix`; previously linked static binaries are unchanged.
+The source archive includes musl's MIT license. Source and original-libc SHA-256
+checksums are enforced by the staging/build scripts, and a source manifest is
+written alongside the candidate image.
+
+To reproduce on a new image copy:
+
+```powershell
+.\build-image-tool.ps1
+python prepare-thread-runtime.py --output build/new-thread-runtime.img
+python test-development.py --disk build/new-thread-runtime.img --backport-only
+```
+
+The compiled result is in `build/development-tests/development.img`, not the
+input candidate. Preserve that output before running another development suite.
+The regression includes the original post-fork failure, a fresh-exec case, final
+worker exit status, and the desktop waiting for every thread. The original
+legacy `build/toolchain.img` remains an unpatched archival fallback; its libc
+still has the upstream fork/thread-exit bug.
+
+Inside the patched Aurora image, the complete fixture can be rebuilt with:
+
+```sh
+cd /work
+gcc -static -pthread foundations.c -o foundations
+./foundations
+```
 
 ## Limits
 

@@ -101,8 +101,10 @@ python test-native-gcc.py
 This test copies both disks, runs a hidden QEMU instance on QMP port 4446, and
 invokes no host C compiler. It verifies the driver version, compiler/assembler/
 linker execution, generated programs, malloc/integer/floating-point output,
-invalid-source diagnostics, recovery, reboot persistence, and original SDK apps.
-Results: `build/native-tests/results.json`. Screenshot: `build/native-gcc-tested.png`.
+invalid-source diagnostics, recovery, shared-memory pthreads, COW memory,
+reboot persistence, and original SDK apps. It defaults to the patched VirtIO
+development image and stages the current regression source onto its copy.
+Results: `build/ext2-tests/results.json`. Screenshot: `build/native-gcc-tested.png`.
 
 Toolchain source: [musl.cc static native toolchains](https://musl.cc/), specifically
 `x86_64-linux-musl-native.tgz`: GCC 11.2.1 (20211120), Binutils 2.37, and musl.

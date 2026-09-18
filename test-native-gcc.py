@@ -92,7 +92,7 @@ try:
         check(marker.removeprefix('PASS '),marker in out)
     out=command('./foundations leader-exit');check('Desktop waits for final thread and preserves exit status','THREAD_WORKER_FINISHED' in out and 'Application exited: 7' in out)
     (folder/'foundations-serial.log').write_text(log())
-    stop();boot();out=command('hello aurora' if args.foundations_only else './demo');check('Guest-built executable survives VM restart',('Hello, aurora!' if args.foundations_only else 'Compiled by GCC inside Aurora!') in out)
+    stop();boot();out=command('hello aurora' if args.foundations_only else './demo');check('SDK application runs after restart' if args.foundations_only else 'Guest-built executable survives VM restart',('Hello, aurora!' if args.foundations_only else 'Compiled by GCC inside Aurora!') in out)
     out=command('hello aurora');check('Original Aurora SDK applications still run','Hello, aurora!' in out)
     q.capture('native-gcc-tested')
 finally:stop()

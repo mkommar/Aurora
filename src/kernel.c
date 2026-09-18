@@ -1,5 +1,5 @@
 /* Aurora microkernel: address spaces, traps, scheduling, IPC and capabilities.
- * Device protocols and all desktop/application logic live in ring 3 binaries. */
+ * Desktop/input/display run in ring 3; storage remains a kernel compatibility path. */
 #include "abi.h"
 #include "images.h"
 #define NX (1ULL<<63)
