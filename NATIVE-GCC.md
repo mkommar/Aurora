@@ -1,7 +1,7 @@
 # GCC running inside Aurora
 
 The compiler now executes as Aurora user processes. GCC's driver starts `cc1`,
-GNU `as`, `collect2`, and GNU `ld` inside the guest. Generated static C executables
+GNU `as`, `collect2`, and GNU `ld` inside the guest. Generated static and dynamic C executables
 run there too. No Windows compiler, host compilation bridge, Linux kernel, or
 nested Linux VM is involved in this workflow.
 
@@ -31,8 +31,11 @@ Application exited: 0
 
 Other included sources are `compute.c` (allocation, a loop and integer output),
 `math.c` (floating point), and `broken.c` (intentional compiler diagnostics).
-Always use `-static` for executable linking. `gcc -c` and `gcc -S` can be used
-for intermediate output; dynamically linked executables are not supported.
+The updated development disk supports default dynamic linking, PIE and shared
+libraries through the guest-built musl loader. `gcc demo.c -o demo` works;
+use `gcc -fPIE -pie` for PIE and `gcc -shared -fPIC` for a DSO. The older
+`-NativeGcc` disk still requires `-static`. `gcc -c` and `gcc -S` remain available
+for intermediate output. See [multicore and dynamic linking](SMP-DYNAMIC.md).
 
 To edit a source file in Aurora:
 
@@ -87,9 +90,9 @@ only to that older format. The ext2 development disk supports directories,
 symlinks, metadata and normal file allocation. VirtIO requests suspend their caller until IRQ completion; the ATA fallback
 still polls.
 
-This remains a limited static Linux ABI, without dynamic linking or
-networking or full POSIX compatibility. GCC itself has not been rebuilt inside
-Aurora. Static musl pthreads now use shared VM and futex mechanisms; see
+This remains a limited Linux ABI, without networking or full POSIX compatibility.
+GCC itself has not been rebuilt inside Aurora. Static and dynamic musl pthreads
+use shared VM and futex mechanisms and can execute on different CPUs; see
 [Thread validation](THREADS.md). The original compiler package remains GCC 11.2.1 with binutils 2.37.
 
 ## Tests and provenance

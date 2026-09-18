@@ -113,9 +113,11 @@ yields, blocks, or exits. Each task has a guarded kernel stack. Explicit
 continuations suspend disk callers and filesystem-lock waiters while other
 ring-3 services run; IRQ handlers acknowledge completion and wake a waiter.
 Filesystem mutation remains serialized. Native exit cleanup that may touch
-storage is deferred out of interrupt dispatch. There is no
-SMP support. Aurora's kernel and original SDK binaries use `-mgeneral-regs-only`.
-The kernel also saves and restores x87/SSE state and FS base for native processes.
+storage is deferred out of interrupt dispatch. One to eight CPUs can execute
+native applications and pthreads; services stay on the BSP. See
+[SMP synchronization](SMP-DYNAMIC.md) for per-CPU state, locks and VM barriers.
+Aurora's kernel and original SDK binaries use `-mgeneral-regs-only`.
+The kernel also saves and restores x87/SSE state and FS/GS bases for native processes.
 AVX state is not supported.
 
 A user exception marks just that process dead, logs the fault, and schedules

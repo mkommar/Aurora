@@ -35,7 +35,7 @@ continue to use AuroraFS on the boot disk through their original ABI.
 
 | Step | Working implementation | Remaining work |
 | --- | --- | --- |
-| Processes and syscalls | Fork/exec/wait, shared open descriptions, descriptor flags, pipes, basic signal handlers/masks/return, process groups, poll/select, musl pthreads and futexes | Full POSIX signals, dynamic linking and comprehensive job control |
+| Processes and syscalls | Fork/exec/wait, shared open descriptions, descriptor flags, pipes, basic signal handlers/masks/return, process groups, poll/select/pselect, musl pthreads/futexes, multicore and musl dynamic linking | Full POSIX signals, finer native kernel locks and comprehensive job control |
 | Memory | BIOS E820 discovery, allocated physical pages, reclamation on unmap/exit, growable brk/mmap, 512 MiB virtual spaces, copy-on-write fork and shared thread address spaces | Paging to disk, scalable page-table allocation and broader OOM testing |
 | Filesystem namespace | Directories, relative descriptors, symlinks, rename/replacement, deletion, modes, timestamps, directory enumeration | Unified legacy/native namespace, full ownership/access rules, crash orphan recovery |
 | Block I/O | PCI discovery, transitional VirtIO DMA queue, MSI-X/MSI/INTx routing, blocked callers, timeout and device flush | Multiple outstanding requests, IOMMU, user-space storage service; ATA and early boot still poll |
@@ -83,7 +83,8 @@ and are not a fully hermetic build. BusyBox is used only in that temporary VM.
 
 GNU sources: Bash 5.2.37, Make 4.4.1, coreutils 9.5, sed 4.9, grep 3.11,
 gawk 5.3.1, findutils 4.10.0, tar 1.35 and gzip 1.14. Coreutils `stdbuf` is
-excluded because its preload library requires dynamic linking. Gawk extensions
+excluded from the bootstrap before dynamic linking was supported and has not
+yet been rebuilt with preload support. Gawk extensions
 and GMP/MPFR are disabled. Binutils and GCC remain the existing musl.cc native
 toolchain; this work does not claim to rebuild GCC itself.
 

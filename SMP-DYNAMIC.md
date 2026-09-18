@@ -97,3 +97,47 @@ kernel-domain overlap. `--resume` reuses only the suite's isolated candidate.
 Source and boot artifacts from before this change are retained in
 `build/before-smp`. The deployed development disk is replaced only after the
 candidate passes regression and read-only filesystem checks.
+
+## Validated release
+
+The shared musl build compiled 1,340 object files inside Aurora. Its pinned
+source and approved `_Fork` replacement were checksum-verified in the guest.
+The installed `libc.so` SHA-256 is
+`7b47d6fe2fcf3b3ab84f78c177e6f46283b3b172c07f8242d98f0a5075cc67fe`.
+
+| Suite | Passed checks |
+| --- | ---: |
+| Native GCC and pthread foundations, 4 CPUs | 26 |
+| SDK applications/storage | 24 |
+| Isolation and GUI, 128 MiB | 40 |
+| GNU/filesystems with MSI-X, 4 CPUs | 25 |
+| GNU/filesystems with INTx, 4 CPUs | 25 |
+| Shared-runtime build and dynamic/SMP suite, 4 CPUs | 16 |
+| Dynamic/POSIX suite, 1 CPU | 10 |
+| Dynamic/POSIX/SMP suite, 8 CPUs | 15 |
+| Latest-disk runtime installation, dynamic/SMP suite, 4 CPUs | 15 |
+
+These are 196 harness checks across configurations, with additional assertions
+inside the guest programs. Tests cover long exec argument lists, relative
+symlinks, atomic `pselect` signal masks, alternate signal stacks, malformed ELF,
+shared-library constructors/TLS, `dlopen`, and the dynamic fork/thread-exit fix.
+The SMP test deliberately attempts a write on a remote CPU after `mprotect`
+removes write permission; the expected process fault confirms stale writable
+translations are revoked. Four- and eight-CPU runs each recorded 65 acknowledged
+remote VM barriers; all eight CPUs executed native applications. Both storage
+interrupt routes completed with zero timeouts.
+
+The final disk was staged from the latest development image, preserving its
+contents, and passed independent read-only ext2 and FAT32 checks. It is installed
+as `build/development.img`; the previous disk and manifest are retained as
+`build/development-before-smp.img` and `build/development-before-smp.manifest.json`.
+The full guest-built source/object tree remains in
+`build/dynamic-tests/toolchain.img`. The deployed disk includes the shared
+runtime and `/work/build-shared-musl.sh` for rebuilding from its pinned archive.
+
+`build/smp-runtime-validation.json` records hashes, counts, CPU/IRQ counters,
+build logs, deployment provenance and the remaining native-lock limitation.
+`stage-shared-runtime.py` stages a validated runtime onto a fresh disk copy;
+it never replaces the current development disk itself. `image_access.py` uses
+the existing pinned filesystem library for extraction, rejects writes during
+read-only access, and verifies GPT bounds/checksums.

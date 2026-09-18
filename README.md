@@ -152,12 +152,17 @@ python test-microkernel.py --nm 'C:\path\to\llvm\bin\llvm-nm.exe'
 python test-smoke.py --build-dir build/selftest --nm 'C:\path\to\llvm\bin\llvm-nm.exe'
 ```
 
-Verified: **12 native GCC checks**, **24 application/storage checks**,
+Verified: **26 native GCC/thread checks**, **24 application/storage checks**,
 **28 microkernel checks**, and **12 GUI checks**, including GUI
 operation while a hostile process spins continuously. The protection checks
 cover private address spaces, page permissions, stack guards, hardware access,
 invalid syscall buffers, exception containment, and timer preemption. The six
 intentional faults are present only in the self-test image.
+
+Multicore, dynamic linking and the expanded POSIX runtime are validated on
+**1, 4 and 8 CPUs**. The patched shared musl runtime was compiled inside Aurora.
+See [multicore/runtime validation](SMP-DYNAMIC.md) for the full 196-check matrix,
+filesystem checks, deployment records and remaining concurrency limits.
 
 The application/storage suite also tests malformed ELF files, runtime and memory
 allocation, invalid file buffers, maximum-size files, crash recovery, and persistence
