@@ -77,6 +77,7 @@ static i64 ext2_io(int index,u64 offset,void *buffer,u64 count,int write){
     if(!error)error=write?ext4_fwrite(&file,buffer,count,&done):ext4_fread(&file,buffer,count,&done);
     NFILES[index].size=ext4_fsize(&file);int close_error=ext4_fclose(&file);
     if(write&&!error&&!close_error){ext4_mtime_set(NFILES[index].path,native_timestamp());ext4_ctime_set(NFILES[index].path,native_timestamp());}
+    if(write&&(error||close_error||done!=count)){serial("EXT2 write error=");hex(error?error:close_error);serial(" offset=");hex(offset);serial(" requested=");hex(count);serial(" completed=");hex(done);serial("\r\n");}
     if(error)return -error;if(close_error)return -close_error;return done;
 }
 static int ext2_commit(int index){

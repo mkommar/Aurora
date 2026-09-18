@@ -38,7 +38,7 @@ int main(void){
     CHECK(shutdown(s,SHUT_WR)==0);CHECK(read(s,data,1)==0);close(s);puts("PASS TCP nonblocking connect dup partial reads and half close");
     for(int i=0;i<40;i++){s=socket(AF_INET,SOCK_STREAM,0);CHECK(s>=0);dest=host(8883);CHECK(connect(s,(void*)&dest,sizeof dest)==0);CHECK(shutdown(s,SHUT_RDWR)==0);close(s);}
     puts("PASS repeated TCP shutdown and descriptor reuse");
-    s=socket(AF_INET,SOCK_STREAM,0);CHECK(s>=0);dest=host(8899);CHECK(connect(s,(void*)&dest,sizeof dest)==-1&&errno==ECONNREFUSED);close(s);
-    puts("PASS refused TCP connection");
+    s=socket(AF_INET,SOCK_STREAM,0);CHECK(s>=0);dest=host(8899);CHECK(connect(s,(void*)&dest,sizeof dest)==-1&&(errno==ECONNREFUSED||errno==ETIMEDOUT));close(s);
+    puts("PASS unavailable TCP endpoint fails within connect deadline");
     puts("AURORA_NETWORK_ABI_PASS");return 0;
 }

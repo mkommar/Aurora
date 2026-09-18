@@ -470,7 +470,7 @@ static i64 native_stat(int index,u64 address,int terminal){
     u8 *out=native_buffer(current_task,address,144,1);if(!out)return -14;memset(out,0,144);
     *(u64 *)(out)=1;*(u64 *)(out+8)=index+1;*(u64 *)(out+16)=1;
     u32 mode=terminal?0666:(*(u32 *)(NFILES[index].pad+4)?*(u32 *)NFILES[index].pad:0755);
-    *(u32 *)(out+24)=(terminal?0020000:(NFILES[index].kind==2?0040000:NFILES[index].kind==3?0120000:0100000))|mode;
+    *(u32 *)(out+24)=(terminal?(terminal==6?0140000:0020000):(NFILES[index].kind==2?0040000:NFILES[index].kind==3?0120000:0100000))|mode;
     *(u32 *)(out+28)=1000;*(u32 *)(out+32)=1000;
     *(u64 *)(out+48)=terminal?0:NFILES[index].size;*(u64 *)(out+56)=4096;*(u64 *)(out+64)=terminal?0:(NFILES[index].size+511)/512;
     if(!terminal&&ext2_ready&&!(fat_ready&&fat_path(NFILES[index].path))){
@@ -557,7 +557,7 @@ static Frame *native_dispatch(Frame *f){
         if(ext2_ready&&!(fat_ready&&fat_path(path))&&(n==6||(n==262&&(d&256)))){char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;
             index=-1;for(u32 i=0;i<native_count;i++)if(NFILES[i].kind&&ns_equal(NFILES[i].path,resolved)){index=i;break;}if(index<0)index=ext2_find(resolved);
         }else index=native_find(path);result=index<0?-2:native_stat(index,target,0);break;}
-    case 5:result=a>=NATIVE_FDS||!p->fd[a].kind?-9:native_stat(p->fd[a].index,b,p->fd[a].kind!=1);break;
+    case 5:result=a>=NATIVE_FDS||!p->fd[a].kind?-9:native_stat(p->fd[a].index,b,p->fd[a].kind==6?6:p->fd[a].kind!=1);break;
     case 8:if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}if(p->fd[a].kind==5){result=c>4?-22:0;break;}if(p->fd[a].kind!=1){result=-29;break;}
         {i64 position=(i64)b;if(c==1)position+=(i64)native_descriptions[p->fd[a].description].offset;else if(c==2)position+=(i64)NFILES[p->fd[a].index].size;else if(c!=0){result=-22;break;}
         if(position<0)result=-22;else result=native_descriptions[p->fd[a].description].offset=(u64)position;}break;

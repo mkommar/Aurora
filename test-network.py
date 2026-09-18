@@ -5,7 +5,7 @@ import importlib.util,json,shutil,subprocess,time,struct,argparse,re
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');parser.add_argument('--cpus',type=int,default=1);parser.add_argument('--rebuild-musl',action='store_true');parser.add_argument('--continue-musl',action='store_true');parser.add_argument('--resume',action='store_true');parser.add_argument('--folder',default='build/network-tests');parser.add_argument('--qmp-port',type=int,default=4450);parser.add_argument('--accel',choices=['tcg','whpx'],default='tcg');args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
+parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');parser.add_argument('--cpus',type=int,default=1);parser.add_argument('--rebuild-musl',action='store_true');parser.add_argument('--continue-musl',action='store_true');parser.add_argument('--resume',action='store_true');parser.add_argument('--folder',default='build/network-tests');parser.add_argument('--qmp-port',type=int,default=4450);parser.add_argument('--script');parser.add_argument('--intx',action='store_true');parser.add_argument('--accel',choices=['tcg','whpx'],default='tcg');args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
 folder=Path(args.folder);folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img');shutil.copyfile('build/kernel.elf',folder/'kernel.elf')
 if not args.resume:shutil.copyfile(args.disk,folder/'toolchain.img')
@@ -17,7 +17,10 @@ with tarfile.open('tools/network-bootstrap/network-bootstrap.tar.gz') as archive
         if entry.isfile():files['/'+entry.name.removeprefix('./')]=archive.extractfile(entry).read()
 files['/etc/resolv.conf']=b'nameserver 10.0.2.3\noptions timeout:2 attempts:2\n'
 files['/etc/hosts']=b'127.0.0.1 localhost\n'
-files['/work/net-test.sh']=b'#!/bin/sh\n/bin/curl --version\n/bin/curl -v --max-time 20 http://example.com/\n/bin/curl -v --max-time 30 https://example.com/\necho NETWORK_SCRIPT_DONE\n'
+from network_test_fixture import start
+servers,fixture_files=start(folder)
+files.update(fixture_files)
+if args.script:files['/work/net-test.sh']=Path(args.script).read_bytes()
 put_ext2_files(folder/'toolchain.img',files)
 q=None;process=None;results=[]
 def log():return (folder/'serial.log').read_text(errors='replace')
@@ -36,7 +39,7 @@ def boot():
         '-no-reboot','-vga','std','-drive',f'format=raw,file={folder}/aurora.img,if=ide,index=0',
         '-drive',f'format=raw,file={folder}/toolchain.img,'+('if=none,id=development' if args.virtio else 'if=ide,index=1'),
         *(['-device','virtio-blk-pci,drive=development,disable-modern=on'] if args.virtio else []),
-        '-serial',f'file:{folder}/serial.log','-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0,disable-modern=on','-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on','-display','none',
+        '-serial',f'file:{folder}/serial.log','-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0,disable-modern=on'+(',vectors=0' if args.intx else ''),'-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on','-display','none',
         '-qmp',f'tcp:127.0.0.1:{args.qmp_port},server=on,wait=off'],creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
     deadline=time.monotonic()+45
     while True:
@@ -78,8 +81,14 @@ try:
     boot()
     wait(lambda:'NET: DHCP' in log(),60)
     out=command('chmod 755 /bin/curl');check('curl executable', 'Application exited: 0' in out)
-    out=command('bash /work/net-test.sh',seconds=100)
+    out=command('bash /work/net-test.sh',seconds=240)
     print(out,flush=True)
-    check('network script completes','NETWORK_SCRIPT_DONE' in out)
+    for marker in re.findall(r'^(?:PASS[^\r\n]*|AURORA_NETWORK_ABI_PASS)$',out,re.M):results.append(marker)
+    check('network script completes','AURORA_NETWORK_TEST_COMPLETE' in out and 'Application exited: 0' in out)
+    (folder/'results.json').write_text(json.dumps({'checks':results,'cpus':args.cpus,'log':'serial.log'},indent=2))
 finally:
+    if q:
+        try:command('sync',seconds=30)
+        except Exception:pass
     stop()
+    for server in servers:server.shutdown();server.server_close()

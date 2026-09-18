@@ -96,13 +96,14 @@ void network_close(int handle){
 }
 int network_connect(int handle,const void *address,unsigned length){
     NetSocket *s=get_socket(handle);if(!s)return -9;ip_addr_t ip;uint16_t port;int r=parse_address(address,length,&ip,&port);if(r)return r;
-    if(!network_configured())return -101;if(s->error)return -s->error;if(s->connected)return 0;if(s->connecting)return -115;
+    if(!network_configured())return -101;if(s->error)return -s->error;if(s->type==1&&!s->tcp)return -107;if(s->connected)return 0;if(s->connecting)return -115;
     err_t error;if(s->type==2){error=udp_connect(s->udp,&ip,port);if(!error)s->connected=1;}
     else{error=tcp_connect(s->tcp,&ip,port,connected);if(!error){s->connecting=1;return -115;}}
     return -error_number(error);
 }
 int network_bind(int handle,const void *address,unsigned length){
     NetSocket *s=get_socket(handle);if(!s)return -9;ip_addr_t ip;uint16_t port;int r=parse_address(address,length,&ip,&port);if(r)return r;
+    if(s->type==1&&!s->tcp)return -107;
     return -error_number(s->type==1?tcp_bind(s->tcp,&ip,port):udp_bind(s->udp,&ip,port));
 }
 long network_send(int handle,const void *data,size_t size,unsigned flags,const void *address,unsigned length){
@@ -154,7 +155,7 @@ int network_option(int handle,int level,int option,void *value,unsigned *length,
         else if(option==3&&!set)result=s->type;
         else if(option==7||option==8){if(set&&v<0)return -22;result=option==7?TCP_SND_BUF:TCP_WND;}
         else if(option==9&&s->tcp){if(set){if(v)ip_set_option(s->tcp,SOF_KEEPALIVE);else ip_reset_option(s->tcp,SOF_KEEPALIVE);}result=ip_get_option(s->tcp,SOF_KEEPALIVE)!=0;}
-        else if(option==2){/* No listeners exist; client bind still rejects collisions. */result=0;}
+        else if(option==2)return -92; /* SO_REUSEADDR is not implemented. */
         else return -92;
     }else if(level==6&&s->tcp){
         if(option==1){if(set){if(v)tcp_nagle_disable(s->tcp);else tcp_nagle_enable(s->tcp);}result=tcp_nagle_disabled(s->tcp)!=0;}

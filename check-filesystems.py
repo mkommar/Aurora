@@ -31,3 +31,4 @@ try:
     output=logfile.read_text(errors='replace');print(output[-6000:])
     if code or not all(marker in output for marker in ['AURORA_EXT2_CHECK_OK','AURORA_FAT32_CHECK_OK','AURORA_FILESYSTEM_CHECKS_PASSED']) or 'Fix? no' in output:raise SystemExit('Filesystem validation failed')
 finally:server.shutdown();server.server_close()
+

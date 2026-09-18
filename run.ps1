@@ -1,4 +1,4 @@
-param([switch]$Headless, [switch]$NoBuild, [switch]$SelfTest, [switch]$NativeGcc, [switch]$Minimal, [ValidateRange(1,8)][int]$Cpus = 4)
+param([switch]$Headless, [switch]$NoBuild, [switch]$SelfTest, [switch]$NativeGcc, [switch]$Minimal, [switch]$Offline, [ValidateRange(1,8)][int]$Cpus = 4)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 if (!$NoBuild) { & "$PSScriptRoot/build.ps1" -SelfTest:$SelfTest }
@@ -14,6 +14,10 @@ elseif ($NativeGcc -or (!$Minimal -and !$SelfTest -and (Test-Path 'build/toolcha
     if (!(Test-Path 'build/toolchain.img')) { throw 'Run setup-native-gcc.py first to create the native compiler disk.' }
     $arguments[$arguments.IndexOf('128M')] = '1G'
     $arguments += @('-drive','format=raw,file=build/toolchain.img,if=ide,index=1')
+}
+if ($arguments -contains '1G') {
+    $arguments += @('-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on')
+    if (!$Offline) { $arguments += @('-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0,disable-modern=on') }
 }
 if ($Headless) { $arguments += @('-display','none') }
 else { $arguments += @('-display','gtk') }

@@ -31,6 +31,7 @@ with tarfile.open('tools/gcc-native/x86_64-linux-musl-native.tgz') as archive:
 files={'/lib/libgcc_s.so':libgcc,'/lib/libgcc_s.so.1':libgcc,
     '/work/lib.c':Path('tests/dynamic-library.c').read_bytes(),
     '/work/dyn.c':Path('tests/dynamic-posix.c').read_bytes(),'/work/smp.c':Path('tests/native-smp.c').read_bytes(),'/work/plugin.c':Path('tests/dynamic-plugin.c').read_bytes(),'/work/build-shared-musl.sh':Path('build-shared-musl.sh').read_bytes()}
+if args.resume:files.pop('/lib/libgcc_s.so',None)
 if not args.resume:files.update({'/lib/libc.so':libc,'/lib/ld-musl-x86_64.so.1':libc})
 put_ext2_files(folder/'toolchain.img',files)
 q=None;process=None;results=[]
