@@ -63,6 +63,16 @@ static int exec_argc,exec_envc;
 static u32 native_free_pages;
 static u32 native_page_hint;
 static u32 native_space(u32 id){return native_vm_attached[id]?native_vm_owner[id]:id;}
+volatile u64 native_vm_shootdowns;
+static void native_vm_barrier(u32 id){
+    Cpu *self=cpu_local();if(!self->compat_owned)panic("VM mutation outside native state lock");
+    u32 bit=1U<<native_space(id);if(self->vm_barriers&bit)return;self->vm_barriers|=bit;
+    u64 root=task_cr3[id];int sent=0;
+    for(u32 i=0;i<cpu_count;i++)if(i!=self->index&&cpus[i].online&&__atomic_load_n(&cpus[i].in_user,__ATOMIC_ACQUIRE)&&cpus[i].task<TASK_COUNT&&task_cr3[cpus[i].task]==root){cpu_ipi(cpus[i].apic_id,62);sent=1;}
+    for(u32 i=0;i<cpu_count;i++)if(i!=self->index&&cpus[i].online)
+        while(__atomic_load_n(&cpus[i].in_user,__ATOMIC_ACQUIRE)&&cpus[i].task<TASK_COUNT&&task_cr3[cpus[i].task]==root)__asm__ volatile("pause");
+    native_vm_shootdowns+=sent;
+}
 static u64 native_phys(u32 id){return 0x100000000ULL+(u64)(native_space(id)-APP_FIRST)*NATIVE_SIZE;}
 static u64 *native_pt(u32 id){return (u64 *)(task_cr3[id]+0x6000);}
 static u64 *native_alias_pt(u32 id){return (u64 *)(0x09000000ULL+(native_space(id)-APP_FIRST)*0x100000ULL);}
@@ -99,6 +109,7 @@ static void native_page_release(u64 address){
     if(NATIVE_PAGE_REFS[page]&&!--NATIVE_PAGE_REFS[page]){NATIVE_PAGE_BITMAP[page/8]&=~(1U<<(page%8));native_free_pages++;}
 }
 static int native_private_page(u32 id,u64 page){
+    native_vm_barrier(id);
     u64 *pt=native_pt(id),*alias=native_alias_pt(id),old=alias[page]&0x000ffffffffff000ULL;
     if(!(alias[page]&1))return 0;
     if(NATIVE_PAGE_REFS[(old-NATIVE_PAGE_FIRST)/4096]>1){
@@ -115,6 +126,7 @@ static int native_write_fault(u32 id,u64 address,u64 error){
     return native_private_page(id,page);
 }
 static void native_unmap_page(u32 id,u64 page){
+    native_vm_barrier(id);
     u64 *pt=native_pt(id);if(native_alias_pt(id)[page]&1)native_page_release(native_alias_pt(id)[page]&0x000ffffffffff000ULL);pt[page]=0;
     native_alias_pt(id)[page]=0;
     u64 alias=native_phys(id)+page*4096;__asm__ volatile("invlpg (%0)"::"r"(alias):"memory");
@@ -149,6 +161,7 @@ static void native_tables(u32 id){
     native_active[id]=1;
 }
 static int native_map(u32 id,u64 address,u64 size,u64 flags){
+    native_vm_barrier(id);
     if(!size||address<USER_BASE||address>=NATIVE_END||size>NATIVE_END-address)return 0;
     u64 *pt=native_pt(id);
     u64 needed=0;for(u64 page=(address-USER_BASE)/4096;page<=(address+size-1-USER_BASE)/4096;page++)if(!(native_alias_pt(id)[page]&1)||NATIVE_PAGE_REFS[((native_alias_pt(id)[page]&0x000ffffffffff000ULL)-NATIVE_PAGE_FIRST)/4096]>1)needed++;
@@ -450,6 +463,7 @@ static i64 native_stat(int index,u64 address,int terminal){
     return 0;
 }
 static i64 native_fork(Frame *frame,int vfork,u64 child_stack){
+    native_vm_barrier(current_task);
     int id=native_slot();if(id<0)return -11;u32 parent=current_task;
     native_wait_reset(id);
     u64 *source=native_pt(parent);
@@ -486,11 +500,12 @@ static i64 native_sync(void){int error=ext2_ready?ext2_sync():0;if(error)return 
 static void native_mark_group(u32 id,i64 code){
     u32 group=native_process[id].tgid;
     for(u32 member=APP_FIRST;member<TASK_COUNT;member++)if(native_active[member]&&native_process[member].tgid==group&&(tasks[member].state!=DEAD||member==id)){
-        tasks[member].state=DEAD;exit_codes[member]=code;native_reap[member]=1;}
+        tasks[member].state=DEAD;exit_codes[member]=code;native_reap[member]=1;
+        if(task_cpu[member]>=0&&(u32)task_cpu[member]!=cpu_local()->index)cpu_ipi(cpus[task_cpu[member]].apic_id,62);}
 }
 static void native_reap_pending(void){
     if(filesystem_owner>=0)return;filesystem_enter();
-    for(u32 id=APP_FIRST;id<TASK_COUNT;id++)if(native_reap[id]&&id!=current_task){native_reap[id]=0;native_finish(id,exit_codes[id]);}
+    for(u32 id=APP_FIRST;id<TASK_COUNT;id++)if(native_reap[id]&&id!=current_task&&task_cpu[id]<0){native_reap[id]=0;native_finish(id,exit_codes[id]);}
     filesystem_leave();
 }
 static Frame *native_dispatch(Frame *f){
@@ -528,7 +543,7 @@ static Frame *native_dispatch(Frame *f){
         if(!c)for(u64 i=(address-USER_BASE)/4096;i<(address+size-USER_BASE)/4096;i++)native_pt(current_task)[i]&=~1ULL;
         if(!(d&32)){result=native_read(p->fd[e].index,g,(void *)(native_phys(current_task)+address-USER_BASE),b);if(result<0)break;}
         result=address;break;}
-    case 10:if((a&4095)||a<USER_BASE||!b||a>=NATIVE_END||b>NATIVE_END-a||(c&6)==6){result=-22;break;}
+    case 10:native_vm_barrier(current_task);if((a&4095)||a<USER_BASE||!b||a>=NATIVE_END||b>NATIVE_END-a||(c&6)==6){result=-22;break;}
         result=0;for(u64 i=(a-USER_BASE)/4096;i<=(a+b-1-USER_BASE)/4096;i++)if(!(native_alias_pt(current_task)[i]&1))result=-12;
         if(result)break;for(u64 i=(a-USER_BASE)/4096;i<=(a+b-1-USER_BASE)/4096;i++){u64 *pt=native_pt(current_task);u64 physical=pt[i]&0x000ffffffffff000ULL;u64 writable=(c&2)?(NATIVE_PAGE_REFS[(physical-NATIVE_PAGE_FIRST)/4096]>1&&!(pt[i]&NATIVE_SHARED)?NATIVE_COW:WRITE):0;pt[i]=physical|(pt[i]&NATIVE_SHARED)|(c?PRESENT:0)|USER|writable|((c&4)?0:NX);}break;
     case 11:if((a&4095)||a<USER_BASE||!b||a>=NATIVE_END||b>NATIVE_END-a){result=-22;break;}

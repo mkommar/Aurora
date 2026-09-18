@@ -20,7 +20,7 @@ with (folder/'toolchain.img').open('r+b') as disk:
         disk.seek(0);disk.write(struct.pack('<8sII',magic,count+1,sector+capacity))
 if magic!=b'AURDEV01':
     from image_access import put_ext2_files
-    put_ext2_files(folder/'toolchain.img',{'/work/foundations.c':Path('tests/native-foundations.c').read_bytes()})
+    put_ext2_files(folder/'toolchain.img',{'/work/foundations.c':Path('tests/native-foundations.c').read_bytes(),'/work/smp.c':Path('tests/native-smp.c').read_bytes()})
 q=None;process=None;results=[]
 def log():return (folder/'serial.log').read_text(errors='replace')
 def wait(predicate,seconds=120):
@@ -90,6 +90,9 @@ try:
                    'PASS robust mutex owner death','PASS shared thread heap/cwd/umask',
                    'PASS process-shared pthread synchronization','PASS 192 MiB mapping and copy-on-write']:
         check(marker.removeprefix('PASS '),marker in out)
+    if args.cpus>1 and magic!=b'AURDEV01':
+        out=command('gcc -static -pthread smp.c -o smp');check('SMP regression compiles inside Aurora','Application exited: 0' in out)
+        out=command('./smp');check('Pinned threads, GS isolation, remote protection changes and COW','PASS SMP pinned pthreads' in out and 'PASS SMP fork/COW' in out and 'Application exited: 0' in out)
     out=command('./foundations leader-exit');check('Desktop waits for final thread and preserves exit status','THREAD_WORKER_FINISHED' in out and 'Application exited: 7' in out)
     (folder/'foundations-serial.log').write_text(log())
     out=command('sync');check('Filesystem flush succeeds before reboot','Application exited: 0' in out)

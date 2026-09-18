@@ -80,7 +80,7 @@ static i64 native_futex_call(u64 address,u64 operation,u64 value,u64 timeout,u64
     if(op==3||op==4){
         if((int)value<0||(int)timeout<0||(other&3))return -22;
         if(!native_buffer(current_task,other,4,0))return -14;
-        if(op==4&&*word!=(u32)bits)return -11;
+        if(op==4&&__atomic_load_n(word,__ATOMIC_ACQUIRE)!=(u32)bits)return -11;
         u64 destination=(operation&128)?((u64)native_space(current_task)<<32)|other:(native_alias_pt(current_task)[(other-USER_BASE)/4096]&0x000ffffffffff000ULL)|(other&4095);
         int woke=0,moved=0;
         for(int id=APP_FIRST;id<TASK_COUNT;id++){NativeWait *w=&native_waits[id];
@@ -95,7 +95,7 @@ static i64 native_futex_call(u64 address,u64 operation,u64 value,u64 timeout,u64
         return count;}
     if(op!=0&&op!=9)return -38;NativeWait *w=&native_waits[current_task];
     if(w->kind==6){if(w->awoken)return 0;if(timer_ticks>=w->deadline)return -110;}
-    else{if(*word!=(u32)value)return -11;*w=(NativeWait){.kind=6,.syscall=202,.key=key,.bits=mask};
+    else{if(__atomic_load_n(word,__ATOMIC_ACQUIRE)!=(u32)value)return -11;*w=(NativeWait){.kind=6,.syscall=202,.key=key,.bits=mask};
         int error=native_deadline(timeout,op==9,(operation&256)!=0,0,&w->deadline);if(error)return error;}
     native_wait_blocks++;return -4096;
 }

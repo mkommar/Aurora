@@ -10,7 +10,9 @@ static void native_futex_notify(u32 id,u64 address){
 }
 static void native_robust_release(u32 id,u64 node,i64 offset){
     u64 address=node+offset;if(address&3)return;u32 *word=native_buffer(id,address,4,1);
-    if(word&&(*word&0x3fffffffU)==id+100){*word=(*word&0x80000000U)|0x40000000U;native_futex_notify(id,address);}
+    if(word){u32 previous=__atomic_load_n(word,__ATOMIC_ACQUIRE);
+        while((previous&0x3fffffffU)==id+100){u32 next=(previous&0x80000000U)|0x40000000U;
+            if(__atomic_compare_exchange_n(word,&previous,next,0,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)){native_futex_notify(id,address);break;}}}
 }
 static void native_thread_exit(u32 id){
     NativeProcess *p=&native_process[id];if(!native_vm_attached[id])return;
@@ -20,7 +22,7 @@ static void native_thread_exit(u32 id){
             u64 *next=native_buffer(id,node,8,0);if(!next)break;u64 following=*next;
             native_robust_release(id,node,offset);node=following;}
         if(pending)native_robust_release(id,pending,offset);}}
-    if(p->clear_tid){u32 *word=native_buffer(id,p->clear_tid,4,1);if(word){*word=0;native_futex_notify(id,p->clear_tid);}}
+    if(p->clear_tid){u32 *word=native_buffer(id,p->clear_tid,4,1);if(word){__atomic_store_n(word,0,__ATOMIC_RELEASE);native_futex_notify(id,p->clear_tid);}}
     p->clear_tid=p->robust_head=0;
 }
 static i64 native_clone_thread(Frame *frame,u64 flags,u64 stack,u64 parent_tid,u64 child_tid,u64 tls){

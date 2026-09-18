@@ -4,7 +4,7 @@
 #define CPU_MAX 8
 typedef struct {
     u64 task,stack,user_rsp,index,idle_stack;
-    volatile u32 online,in_user;u32 apic_id,compat_owned;
+    volatile u32 online,in_user;u32 apic_id,compat_owned,vm_barriers;
     Tss tss;u64 gdt[7];
 } Cpu;
 static Cpu cpus[CPU_MAX];
@@ -22,10 +22,7 @@ static void cpu_ipi(u32 destination,u32 value);
 static void compatibility_enter(void){
     Cpu *self=cpu_local();if(self->compat_owned)return;
     __atomic_store_n(&self->in_user,0,__ATOMIC_RELEASE);
-    spin_lock(&compatibility_lock);self->compat_owned=1;
-    for(u32 i=0;i<cpu_count;i++)if(i!=self->index&&cpus[i].online&&__atomic_load_n(&cpus[i].in_user,__ATOMIC_ACQUIRE))cpu_ipi(cpus[i].apic_id,62);
-    for(u32 i=0;i<cpu_count;i++)if(i!=self->index&&cpus[i].online)
-        while(__atomic_load_n(&cpus[i].in_user,__ATOMIC_ACQUIRE))__asm__ volatile("pause");
+    spin_lock(&compatibility_lock);self->compat_owned=1;self->vm_barriers=0;
 }
 void cpu_release(void){
     Cpu *self=cpu_local();

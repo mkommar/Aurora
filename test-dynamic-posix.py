@@ -93,6 +93,8 @@ try:
     if args.rebuild_musl or args.continue_musl:
         out=command('bash /work/build-shared-musl.sh'+(' resume' if args.continue_musl else ''),seconds=5400);check('Pinned musl shared runtime rebuilt inside Aurora','AURORA_SHARED_MUSL_BUILT_FROM_PINNED_SOURCE' in out and 'Application exited: 0' in out)
     out=command('chmod 755 /lib/ld-musl-x86_64.so.1');check('Interpreter executable permission','Application exited: 0' in out)
+    out=command('gcc demo.c -o dyn-demo');check('Guest builds default dynamic executable','Application exited: 0' in out)
+    out=command('./dyn-demo');check('Non-PIE dynamic executable runs','Compiled by GCC inside Aurora!' in out and 'Application exited: 0' in out)
     out=command('gcc -shared -fPIC lib.c -o libprobe.so');check('Guest builds shared library','Application exited: 0' in out)
     out=command('gcc -shared -fPIC plugin.c -o plugin.so');check('Guest builds runtime-loaded plugin','Application exited: 0' in out)
     out=command('gcc -fPIE -pie -pthread dyn.c ./libprobe.so -o dyn');check('Guest builds dynamically linked PIE','Application exited: 0' in out)
@@ -103,13 +105,14 @@ try:
     nm=r'C:\Program Files\Unity\Hub\Editor\6000.4.0f1\Editor\Data\PlaybackEngines\AndroidPlayer\NDK\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe'
     symbols={line.split()[2]:int(line.split()[0],16) for line in subprocess.check_output([nm,'-n',str(folder/'kernel.elf')],text=True).splitlines() if len(line.split())==3}
     counters={}
-    for name,count,width in [('cpu_online',1,4),('cpu_user_returns',8,8),('cpu_rendezvous',8,8),('cpu_fast_calls',8,8),('cpu_parallel_service_calls',1,8)]:
+    for name,count,width in [('cpu_online',1,4),('cpu_user_returns',8,8),('cpu_rendezvous',8,8),('cpu_fast_calls',8,8),('cpu_parallel_service_calls',1,8),('native_vm_shootdowns',1,8),('native_count',1,4)]:
         target=(folder/(name+'.bin')).resolve();q.call('pmemsave',{'val':symbols[name],'size':count*width,'filename':str(target)})
         counters[name]=list(struct.unpack('<'+('I' if width==4 else 'Q')*count,target.read_bytes()))
     (folder/'cpu-counters.json').write_text(json.dumps(counters,indent=2),encoding='utf-8')
     check('Requested CPUs online',counters['cpu_online'][0]==args.cpus)
     if args.cpus>1:
         check('Application execution and rendezvous on additional CPUs',sum(counters['cpu_user_returns'][1:])>0 and sum(counters['cpu_rendezvous'][1:])>0)
+        check('Shared-VM protection changes acknowledge remote CPUs',counters['native_vm_shootdowns'][0]>0)
         check('Service kernel operations overlap native kernel operations',counters['cpu_parallel_service_calls'][0]>0)
     out=command('sync');check('Filesystem sync' ,'Application exited: 0' in out)
 finally:

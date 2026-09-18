@@ -27,15 +27,24 @@ and thread bookkeeping do not acquire that filesystem mutex. This allows
 service kernel operations to overlap native kernel operations and allows wait
 operations to progress while storage sleeps.
 
-**The native process/VM domain is still coarse-grained.** Mutating native
-operations rendezvous with CPUs executing native userspace before touching
-shared mappings. Acknowledgement occurs after switching to the kernel CR3;
-restoring a user CR3 flushes its translations before execution resumes. This
-protects COW, unmapping and page reclamation, but stops more CPUs than a per-VM
-shootdown would. Independent native mutating syscalls are not yet fully
-concurrent. Per-address-space locks, separate run queues, fine-grained futex/FD
-locks and targeted TLB generations remain work; this is not completion of that
-broader concurrency goal.
+Mapping changes issue IPIs only to CPUs executing the affected address space.
+Acknowledgement follows the switch to the kernel CR3; restoring a user CR3
+flushes translations before execution resumes. COW, protection changes and
+page reclamation use this barrier. Unrelated address spaces keep executing.
+Dead tasks retain their slot and resources until their owning CPU relinquishes
+them. Robust-futex owner death uses compare/exchange, and clear-TID publication
+uses a release store.
+
+The lock order is native state followed by an endpoint lock. IPC releases its
+endpoint lock before scheduling. CPUs acknowledge VM barriers before waiting
+for the native state lock, avoiding an IPI/lock cycle. A task becomes claimable
+only after the previous CPU has left its kernel stack.
+
+**Native mutating syscalls still share a coarse state lock.** Kernel concurrency
+is split by endpoint, read-side identity calls, native state and the sleeping
+filesystem mutex; it is not yet fully fine-grained within the native domain.
+Per-address-space mutation locks, separate run queues and independent futex/FD
+locks remain work. This implementation does not complete that broader goal.
 
 The initialization and translation-invalidation protocol follows the
 [Intel system programming manuals](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
@@ -56,7 +65,10 @@ overlapping pages, malformed headers and nested interpreters are rejected.
 including the approved `_Fork` backport, and installs the shared libc and loader.
 The bootstrap shared libc and libgcc come from the existing pinned native GCC
 archive. The test harness stages them only onto disposable candidate disks.
-The original static libc archive keeps its previous backport.
+The original static libc archive keeps its previous backport. The filesystem
+metadata cache now holds 16,384 entries in reserved supervisor RAM so source
+trees and their object files can remain cached together. GNU Make uses its
+pipe jobserver; named FIFO filesystem objects are still unsupported.
 
 Additional ABI support includes alternate signal stacks (`SA_ONSTACK`), group
 queries, positioned writes, clock resolution/clock-ID validation, `pselect6`,

@@ -23,6 +23,8 @@ steps 1–7. GNU Make can now rebuild and install itself inside Aurora.
 Musl POSIX threads use shared address spaces and futex synchronization.
 The launcher now starts four CPUs; use `-Cpus 1` for a single-CPU boot.
 ELF interpreters, PIE applications and shared-library loading are supported.
+After installing the shared runtime, `gcc demo.c -o demo` builds dynamically;
+`-static` keeps the existing self-contained executable path.
 See [multicore and dynamic linking](SMP-DYNAMIC.md) and the earlier
 [thread, memory and IRQ validation](THREADS.md).
 

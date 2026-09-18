@@ -8,7 +8,7 @@
 #include <sys/wait.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-static atomic_int arrived,finished;
+static atomic_int arrived,finished,mapping_done;
 static atomic_ulong total;
 static __thread unsigned tls;
 static __thread unsigned gs_value;
@@ -18,15 +18,21 @@ static void *worker(void *arg){
     tls=cpu+100;atomic_fetch_add(&arrived,1);
     gs_value=cpu+200;assert(!syscall(SYS_arch_prctl,0x1001,&gs_value));
     while(atomic_load(&arrived)!=2)__asm__ volatile("pause");
+    while(!atomic_load(&mapping_done))__asm__ volatile("pause");
     for(unsigned i=0;i<1000000;i++){atomic_fetch_add_explicit(&total,1,memory_order_relaxed);if(!(i%10000)){unsigned v;__asm__ volatile("mov %%gs:0,%0":"=r"(v));assert(v==(unsigned)cpu+200);assert(getpid()>0&&tls==(unsigned)cpu+100);}}
     __asm__ volatile("xor %%eax,%%eax; mov %%ax,%%gs":::"rax","memory");assert(getpid()>0);
     atomic_fetch_add(&finished,1);return 0;
 }
 int main(void){
     cpu_set_t mask;assert(!sched_getaffinity(0,sizeof mask,&mask));assert(CPU_COUNT(&mask)>=2);
+    void *probe=mmap(0,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(probe!=MAP_FAILED);
     int last=0;for(int i=0;i<CPU_SETSIZE;i++)if(CPU_ISSET(i,&mask))last=i;
     pthread_t a,b;assert(!pthread_create(&a,0,worker,(void *)0));assert(!pthread_create(&b,0,worker,(void *)(long)last));
+    while(atomic_load(&arrived)!=2)sched_yield();
+    for(int i=0;i<32;i++){assert(!mprotect(probe,4096,PROT_READ));assert(!mprotect(probe,4096,PROT_READ|PROT_WRITE));}
+    atomic_store(&mapping_done,1);
     assert(!pthread_join(a,0));assert(!pthread_join(b,0));assert(atomic_load(&total)==2000000&&atomic_load(&finished)==2);
+    assert(!munmap(probe,4096));
     puts("PASS SMP pinned pthreads, shared atomics and per-CPU TLS");
     for(int round=0;round<12;round++){
         unsigned *p=mmap(0,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);assert(p!=MAP_FAILED);*p=43;

@@ -196,7 +196,6 @@ Frame *schedule(void) {
     for(u32 offset=1;offset<=TASK_COUNT;offset++) {
         u32 next=(old+offset)%TASK_COUNT;spin_lock(&ipc_locks[next]);
         if(tasks[next].state==RUNNABLE&&task_cpu[next]<0&&(task_affinity[next]&(1U<<cpu))&&(!cpu||native_active[next])) {
-            if(filesystem_owner<0&&!task_kernel_sp[next])native_signal_deliver(next);if(tasks[next].state!=RUNNABLE){spin_unlock(&ipc_locks[next]);continue;}
             current_task=next;task_cpu[next]=cpu;task_runs[next]++;if(next!=old)context_switches++;
             spin_unlock(&ipc_locks[next]);return &tasks[next].frame;
         }
@@ -242,7 +241,7 @@ Frame *trap_dispatch(Frame *frame) {
     int service_fast=!native_active[current_task]&&frame->vector==128&&frame->rax<=SYS_TICKS;
     if(service_fast&&__atomic_load_n(&compatibility_lock,__ATOMIC_ACQUIRE))cpu_parallel_service_calls++;
     if(!service_fast)compatibility_enter();
-    if(t->state==DEAD)return schedule();
+    if(t->state==DEAD||t->state==STOPPED)return schedule();
     if(frame->vector==62){cpu_rendezvous[cpu_local()->index]++;if(local_apic)local_apic[0xb0/4]=0;return schedule();}
     if(frame->vector==32) { timer_ticks++;for(u32 i=1;i<cpu_count;i++)if(cpus[i].online)cpu_ipi(cpus[i].apic_id,62);virtio_timeout();task_preemptions[current_task]++;outb(0x20,0x20);return schedule(); }
     if(frame->vector>=33&&frame->vector<48){virtio_interrupt(frame->vector-32);if(frame->vector>=40)outb(0xa0,0x20);outb(0x20,0x20);return schedule();}
@@ -339,5 +338,5 @@ void kernel_main(void) {
     for(int i=3;i<10;i++)create_task(i,probe_image,probe_image_size,PROBE_TEXT_END,PROBE_RO_END,fb);
 #endif
     smp_init();timer_init();serial("AURORA: private CR3, W^X, IPC, PIT preemption ready\r\n");
-    kernel_started=1;current_task=TASK_COUNT-1;enter_user(schedule());
+    __atomic_store_n(&kernel_started,1,__ATOMIC_RELEASE);current_task=TASK_COUNT-1;enter_user(schedule());
 }
