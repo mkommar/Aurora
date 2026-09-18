@@ -172,12 +172,12 @@ diagnostics go beside the selected image. `tools-qmp.py` supports `capture NAME`
 ## Current scope
 
 This is a small OS with microkernel-style service isolation and an initial
-in-kernel storage implementation. It has no networking, dynamic linker,
-general-purpose physical memory allocator, or automatic service restart.
-The application runtime supplies a fixed 128 KiB heap. The terminal and notes
+in-kernel storage implementation. Native applications use a BIOS-backed page
+allocator and musl's dynamic linker; networking and automatic service restart
+remain unimplemented. The separate SDK runtime supplies a fixed 128 KiB heap. The terminal and notes
 share the desktop process. Scheduling is
 preemptive, but PS/2 input still uses polling and can consume a host CPU core.
-It targets single-core BIOS QEMU with 128 MiB RAM (1 GiB for GCC) and standard VGA, not UEFI or
+It targets BIOS QEMU with one to eight CPUs, 128 MiB RAM (1 GiB for GCC) and standard VGA, not UEFI or
 general physical hardware.
 
 Tool sources: [NASM](https://www.nasm.us/),

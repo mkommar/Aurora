@@ -30,7 +30,18 @@ static void bad_elf(void){
     h->e_phentsize=1;fd=open("./badelf",O_TRUNC|O_WRONLY);assert(fd>=0&&write(fd,image,st.st_size)==st.st_size);close(fd);errno=0;assert(execv(args[0],args)==-1&&errno==ENOEXEC);unlink("./badelf");free(image);
     puts("PASS malformed ELF and missing interpreter preserve running process");
 }
-int main(void){
+int main(int argc,char **argv){
+    if(argc>1){assert(argc==1801);for(int i=1;i<argc;i++)assert(!strcmp(argv[i],"long-link-argument"));return 0;}
+    char **many=calloc(4098,sizeof(char *));assert(many);many[0]="./dyn";
+    for(int i=1;i<=1800;i++)many[i]="long-link-argument";
+    pid_t argument_child=fork();assert(argument_child>=0);if(!argument_child){execv(many[0],many);_exit(90);}
+    int argument_status;assert(waitpid(argument_child,&argument_status,0)==argument_child&&WIFEXITED(argument_status)&&!WEXITSTATUS(argument_status));
+    for(int i=1801;i<=4096;i++)many[i]="too-many";
+    errno=0;assert(execv(many[0],many)==-1&&errno==E2BIG);free(many);
+    puts("PASS large exec argument lists and bounded E2BIG rejection");
+    int linkdir=open(".",O_RDONLY|O_DIRECTORY);assert(linkdir>=0);unlink("./dyn-link");
+    assert(!symlinkat("dyn",linkdir,"dyn-link"));char linktarget[8];assert(readlink("./dyn-link",linktarget,sizeof linktarget)==3&&!memcmp(linktarget,"dyn",3));
+    assert(!unlink("./dyn-link"));close(linkdir);
     assert(library_value()==40);local=10;pthread_t t;void *result;
     assert(!pthread_create(&t,0,worker,0));assert(!pthread_join(t,&result));assert(result==(void *)73&&local==10);assert(library_value()==41);
     void *lib=dlopen("./libprobe.so",RTLD_NOW|RTLD_LOCAL);assert(lib);int (*fn)(void)=dlsym(lib,"library_value");assert(fn&&fn()==42);assert(!dlclose(lib));

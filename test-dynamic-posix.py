@@ -1,7 +1,7 @@
 """Run GCC, compilation, linking and generated applications inside Aurora.
 Uses isolated disk copies and QMP port 4446. No host C compiler is invoked.
 """
-import importlib.util,json,shutil,subprocess,time,struct,argparse
+import importlib.util,json,shutil,subprocess,time,struct,argparse,re
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
@@ -93,12 +93,15 @@ try:
     if args.rebuild_musl or args.continue_musl:
         out=command('bash /work/build-shared-musl.sh'+(' resume' if args.continue_musl else ''),seconds=5400);check('Pinned musl shared runtime rebuilt inside Aurora','AURORA_SHARED_MUSL_BUILT_FROM_PINNED_SOURCE' in out and 'Application exited: 0' in out)
     out=command('chmod 755 /lib/ld-musl-x86_64.so.1');check('Interpreter executable permission','Application exited: 0' in out)
+    out=command('sha256sum /lib/libc.so');digest=re.search(r'([0-9a-f]{64})\s+/lib/libc.so',out)
+    check('Shared libc provenance digest captured',digest is not None and 'Application exited: 0' in out)
+    (folder/'runtime-sha256.json').write_text(json.dumps({'/lib/libc.so':digest.group(1)},indent=2),encoding='utf-8')
     out=command('gcc demo.c -o dyn-demo');check('Guest builds default dynamic executable','Application exited: 0' in out)
     out=command('./dyn-demo');check('Non-PIE dynamic executable runs','Compiled by GCC inside Aurora!' in out and 'Application exited: 0' in out)
     out=command('gcc -shared -fPIC lib.c -o libprobe.so');check('Guest builds shared library','Application exited: 0' in out)
     out=command('gcc -shared -fPIC plugin.c -o plugin.so');check('Guest builds runtime-loaded plugin','Application exited: 0' in out)
     out=command('gcc -fPIE -pie -pthread dyn.c ./libprobe.so -o dyn');check('Guest builds dynamically linked PIE','Application exited: 0' in out)
-    out=command('./dyn');check('Dynamic linker, TLS and POSIX regression','PASS dynamic PIE' in out and 'PASS POSIX groups' in out and 'PASS malformed ELF' in out and 'PASS patched dynamic fork' in out and 'PASS pselect timeout' in out and 'Application exited: 0' in out)
+    out=command('./dyn');check('Dynamic linker, TLS and POSIX regression','PASS dynamic PIE' in out and 'PASS POSIX groups' in out and 'PASS malformed ELF' in out and 'PASS patched dynamic fork' in out and 'PASS pselect timeout' in out and 'PASS large exec argument' in out and 'Application exited: 0' in out)
     if args.cpus>1:
         out=command('gcc -static -O2 -pthread smp.c -o smp');check('Guest builds SMP regression','Application exited: 0' in out)
         out=command('./smp');check('Multicore pthreads and COW','PASS SMP pinned pthreads' in out and 'PASS SMP fork/COW' in out and 'PASS remote CPU loses stale write permission' in out and 'Application exited: 0' in out)

@@ -242,6 +242,11 @@ the legacy application slot pool. Native virtual ranges are
 Page tables are at `0x0a000000` in 1088 KiB strides and development-volume
 metadata at `0x0d100000` (16,384 cached filesystem entries, 8 MiB). Supervisor aliases above 4 GiB expose each native
 address space to the kernel without requiring contiguous physical allocation.
+Exec staging uses a 1 MiB string pool at `0x0c400000`, environment storage at
+`0x0c500000`, and argument-pointer tables at `0x0c600000` and `0x0c610000`.
+The native state lock protects these shared staging buffers. Up to 4,096
+arguments are accepted; exceeding the count or byte bounds returns `E2BIG`
+before replacing the old image.
 The final 2 MiB of each native range is a stack with an unmapped guard below it.
 Native process memory and the development metadata are touched only when the
 optional disk is present. Use the supplied launcher so that the memory size and

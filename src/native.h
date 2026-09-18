@@ -49,7 +49,11 @@ static NativeSigaction *native_actions(u32 id){return native_signals(native_proc
 #define NATIVE_PIPE_CAPACITY 4096
 typedef struct {u8 bytes[NATIVE_PIPE_CAPACITY];u32 size,readers,writers;} NativePipe;
 #define native_pipes ((NativePipe *)0x0c300000)
-#define exec_args ((char (*)[4096])0x0c400000)
+#define NATIVE_EXEC_ARGS 4096
+#define NATIVE_EXEC_BYTES 0x100000
+#define exec_strings ((char *)0x0c400000)
+#define exec_args ((char **)0x0c600000)
+#define exec_argv ((u64 *)0x0c610000)
 #define exec_env ((char (*)[4096])0x0c500000)
 static int exec_argc,exec_envc;
 /* Supervisor-only aliases mirror the process mappings. Physical pages come
@@ -274,7 +278,7 @@ static i64 native_exec(u32 id,int index){
     if(!error&&loader>=0)error=native_elf_map(id,loader,&interpreter);
     if(error){native_finish(id,127);return error;}
     if(!native_map(id,NATIVE_STACK,0x200000,WRITE|NX)){native_finish(id,127);return -12;}
-    u64 argv[256],env[128],sp=NATIVE_END-32;
+    u64 *argv=exec_argv,env[128],sp=NATIVE_END-32;
     for(int i=exec_envc-1;i>=0;i--){u64 n=ns_length(exec_env[i])+1;sp-=n;memcpy((void *)(native_phys(id)+sp-USER_BASE),exec_env[i],n);env[i]=sp;}
     for(int i=exec_argc-1;i>=0;i--){u64 n=ns_length(exec_args[i])+1;sp-=n;memcpy((void *)(native_phys(id)+sp-USER_BASE),exec_args[i],n);argv[i]=sp;}
     sp-=16;u64 random_address=sp;memset((void *)(native_phys(id)+sp-USER_BASE),0x57,16);
@@ -302,7 +306,7 @@ static i64 native_spawn(u64 address){
     if(index<0){native_path(path,"/bin",r->name);index=native_find(path);}
     if(index<0)return ERR_NOT_FOUND;
     int id=native_slot();if(id<0)return ERR_LIMIT;
-    exec_argc=0;const char *s=r->args;
+    exec_argc=0;const char *s=r->args;for(int i=0;i<256;i++)exec_args[i]=exec_strings+i*4096;
     while(*s&&exec_argc<256){while(*s==' ')s++;if(!*s)break;int n=0;while(*s&&*s!=' '&&n<4095)exec_args[exec_argc][n++]=*s++;exec_args[exec_argc++][n]=0;}
     ns_copy(exec_args[0],path);
     exec_envc=5;ns_copy(exec_env[0],"PATH=/usr/local/bin:/usr/bin:/bin");ns_copy(exec_env[1],"TMPDIR=/tmp");ns_copy(exec_env[2],"LC_ALL=C");ns_copy(exec_env[3],"HOME=/work");ns_copy(exec_env[4],"TERM=dumb");
@@ -488,8 +492,11 @@ static i64 native_fork(Frame *frame,int vfork,u64 child_stack){
 static i64 native_exec_call(u64 path_address,u64 argv_address,u64 env_address){
     char path[256];if(!native_user_path(path_address,path))return -14;int index=native_find(path);if(index<0)return -2;
     exec_argc=exec_envc=0;
-    for(int i=0;i<256;i++){u64 *a=native_buffer(current_task,argv_address+i*8,8,0);if(!a)return -14;if(!*a)break;
-        if(!native_string(*a,exec_args[exec_argc],4096))return -7;exec_argc++;if(i==255)return -7;}
+    u64 used=0;
+    for(int i=0;;i++){u64 *a=native_buffer(current_task,argv_address+i*8,8,0);if(!a)return -14;if(!*a)break;
+        if(i==NATIVE_EXEC_ARGS||used==NATIVE_EXEC_BYTES)return -7;
+        exec_args[i]=exec_strings+used;u64 capacity=NATIVE_EXEC_BYTES-used;if(capacity>4096)capacity=4096;
+        if(!native_string(*a,exec_args[i],capacity))return -7;used+=ns_length(exec_args[i])+1;exec_argc++;}
     if(env_address)for(int i=0;i<128;i++){u64 *a=native_buffer(current_task,env_address+i*8,8,0);if(!a)return -14;if(!*a)break;
         if(!native_string(*a,exec_env[exec_envc],4096))return -7;exec_envc++;if(i==127)return -7;}
     return native_exec(current_task,index);
@@ -654,7 +661,9 @@ static Frame *native_dispatch(Frame *f){
     case 82:case 264:case 316:{char target[256];result=native_at_path(n==82?-100:(i64)a,n==82?a:b,path);if(result)break;
         result=native_at_path(n==82?-100:(i64)c,n==82?b:d,target);if(result)break;
         result=ext2_ready?vfs_rename(path,target,n==316?(u32)e:0):-38;break;}
-    case 88:if(!ext2_ready)result=-38;else{char target[256];if(!native_string(a,target,sizeof(target))||!native_user_path(b,path))result=-14;else result=-ext4_fsymlink(target,path);}break;
+    case 88:case 266:if(!ext2_ready)result=-38;else{char target[256];
+        if(!native_string(a,target,sizeof(target))){result=-14;break;}
+        result=native_at_path(n==266?(i64)b:-100,n==266?c:b,path);if(!result)result=-ext4_fsymlink(target,path);}break;
     case 87:case 263:{result=native_at_path(n==263?(i64)a:-100,n==263?b:a,path);if(result)break;
         if(n==263&&c){result=c==512?native_remove_directory(path):-22;break;}
         if(ext2_ready&&!(fat_ready&&fat_path(path))){char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;uint32_t mode;result=-ext4_mode_get(resolved,&mode);if(result)break;
