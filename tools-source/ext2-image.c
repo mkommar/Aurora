@@ -7,6 +7,8 @@ static int opened(struct ext4_blockdev *b){(void)b;return 0;}
 static int read_blocks(struct ext4_blockdev *b,void *data,uint64_t sector,uint32_t count){(void)b;return transfer(data,sector,count,0);}
 static int write_blocks(struct ext4_blockdev *b,const void *data,uint64_t sector,uint32_t count){(void)b;return transfer((void *)data,sector,count,1);}
 EXT4_BLOCKDEV_STATIC_INSTANCE(device,512,1048576,opened,read_blocks,write_blocks,opened,0,0);
+/* Attach an existing image without formatting it. The host bounds every I/O. */
+__declspec(dllexport) void au_attach(sector_callback callback){transfer=callback;}
 __declspec(dllexport) int au_format(sector_callback callback){
     transfer=callback;static struct ext4_fs fs;
     struct ext4_mkfs_info info={.len=512ULL*1024*1024,.block_size=4096,.inodes=32768,.label="Aurora development"};

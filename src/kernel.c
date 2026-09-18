@@ -255,7 +255,7 @@ Frame *trap_dispatch(Frame *frame) {
         if(current_task!=DESKTOP)result=ERR_CAP;
         else if(frame->rdi<APP_FIRST||frame->rdi>=TASK_COUNT)result=ERR_LIMIT;
         else if(!code)result=ERR_POINTER;
-        else {*code=exit_codes[frame->rdi];result=tasks[frame->rdi].state==DEAD;}
+        else {*code=exit_codes[frame->rdi];result=tasks[frame->rdi].state==DEAD&&(!native_active[frame->rdi]||!native_group_refs[frame->rdi]);}
         break;
     }
     case SYS_NATIVE_SPAWN:result=current_task==DESKTOP?native_spawn(frame->rdi):ERR_CAP;break;

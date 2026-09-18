@@ -37,9 +37,17 @@ static void *shared_state_worker(void *unused){
     (void)unused;void *old=(void *)syscall(SYS_brk,0);if((void *)syscall(SYS_brk,(char *)old+4096)!=(char *)old+4096)return (void *)1;
     if(chdir("/"))return (void *)2;umask(027);return old;
 }
-static void *last_worker(void *argument){puts("LIFETIME worker start");usleep(30000);write((int)(long)argument,"t",1);puts("LIFETIME worker done");return 0;}
+static int last_worker_status;
+static void *last_worker(void *argument){usleep(30000);write((int)(long)argument,"t",1);if(last_worker_status)_exit(last_worker_status);return 0;}
+static void *terminal_last_worker(void *unused){(void)unused;usleep(50000);puts("THREAD_WORKER_FINISHED");_exit(7);}
 struct SharedCondition {pthread_mutex_t mutex;pthread_cond_t condition;int ready;};
-int main(void) {
+int main(int argc,char **argv) {
+    if(argc==2 && !strcmp(argv[1],"leader-exit")){
+        pthread_t worker;CHECK(pthread_create(&worker,0,terminal_last_worker,0)==0);pthread_exit(0);
+    }
+    if(argc==3 && !strcmp(argv[1],"thread-lifetime")){
+        pthread_t worker;CHECK(pthread_create(&worker,0,last_worker,(void *)(long)atoi(argv[2]))==0);pthread_exit(0);
+    }
     int fd=open("/work/fd-test",O_CREAT|O_TRUNC|O_RDWR,0600);
     CHECK(fd>=0); CHECK(write(fd,"abcdef",6)==6); CHECK(lseek(fd,0,SEEK_SET)==0);
     int alias=dup(fd); char c=0; CHECK(alias>=0);
@@ -136,10 +144,14 @@ int main(void) {
     CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0);
     CHECK(pthread_cond_destroy(&sync->condition)==0);CHECK(pthread_mutex_destroy(&sync->mutex)==0);CHECK(munmap(sync,4096)==0);
     CHECK(pthread_mutexattr_destroy(&ma)==0);CHECK(pthread_condattr_destroy(&ca)==0);puts("PASS process-shared mutex and condition across fork");
-    CHECK(pipe(p)==0);child=fork();CHECK(child>=0);
-    if(!child){close(p[0]);if(pthread_create(&threads[0],0,last_worker,(void *)(long)p[1]))_exit(1);pthread_exit(0);}
-    close(p[1]);CHECK(read(p[0],&c,1)==1 && c=='t');CHECK(read(p[0],&c,1)==0);close(p[0]);
-    CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0);
+    for(int after_fork=0;after_fork<3;after_fork++){
+        CHECK(pipe(p)==0);child=fork();CHECK(child>=0);
+        if(!child){close(p[0]);
+            if(after_fork){last_worker_status=after_fork==2?7:0;if(pthread_create(&threads[0],0,last_worker,(void *)(long)p[1]))_exit(1);pthread_exit(0);}
+            char descriptor[16];snprintf(descriptor,sizeof(descriptor),"%d",p[1]);execl("/work/foundations","foundations","thread-lifetime",descriptor,(char *)0);_exit(1);}
+        close(p[1]);CHECK(read(p[0],&c,1)==1 && c=='t');CHECK(read(p[0],&c,1)==0);close(p[0]);
+        CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==(after_fork==2?7:0));
+    }
     puts("PASS process-shared pthread synchronization and leader-exit lifetime");
     size_t large_size=192UL*1024*1024;char *large=mmap(0,large_size,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     CHECK(large!=MAP_FAILED);large[0]=12;large[large_size-1]=34;

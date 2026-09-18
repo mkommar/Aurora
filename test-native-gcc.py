@@ -5,7 +5,7 @@ import importlib.util,json,shutil,subprocess,time,struct,argparse
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/toolchain.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
 folder=Path('build/ext2-tests' if args.disk!='build/toolchain.img' else 'build/native-tests');folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img');shutil.copyfile(args.disk,folder/'toolchain.img')
 # Add the regression source to the isolated test disk, preserving the user's disk.
@@ -18,6 +18,9 @@ with (folder/'toolchain.img').open('r+b') as disk:
         disk.seek(sector*512);disk.write(source)
         disk.seek((count+1)*512);disk.write(struct.pack('<256sQQII232x',b'/work/foundations.c',sector,len(source),capacity,1))
         disk.seek(0);disk.write(struct.pack('<8sII',magic,count+1,sector+capacity))
+if magic!=b'AURDEV01':
+    from image_access import put_ext2_files
+    put_ext2_files(folder/'toolchain.img',{'/work/foundations.c':Path('tests/native-foundations.c').read_bytes()})
 q=None;process=None;results=[]
 def log():return (folder/'serial.log').read_text(errors='replace')
 def wait(predicate,seconds=120):
@@ -81,12 +84,13 @@ try:
         out=command('gcc -static broken.c -o broken');check('Compiler diagnoses invalid source and returns failure','error:' in out and 'Application exited: 1' in out)
         out=command('gcc -static demo.c -o demo');check('Toolchain recovers after compilation failure','Application exited: 0' in out)
         check('No kernel or process faults during toolchain test','FAULT isolated task=' not in log() and 'KERNEL PANIC' not in log())
-    out=command('gcc -static foundations.c -o foundations');check('Foundation regression compiles inside Aurora','Application exited: 0' in out)
+    out=command('gcc -static -pthread foundations.c -o foundations');check('Foundation regression compiles inside Aurora','Application exited: 0' in out)
     out=command('./foundations');check('Shared descriptors, fork, pipes and reclamation','Application exited: 0' in out and 'PASS open-description reclamation' in out and 'PASS large pipe transfer' in out)
     for marker in ['PASS poll/select readiness','PASS shared anonymous mappings and futex','PASS POSIX threads:',
                    'PASS robust mutex owner death','PASS shared thread heap/cwd/umask',
                    'PASS process-shared pthread synchronization','PASS 192 MiB mapping and copy-on-write']:
         check(marker.removeprefix('PASS '),marker in out)
+    out=command('./foundations leader-exit');check('Desktop waits for final thread and preserves exit status','THREAD_WORKER_FINISHED' in out and 'Application exited: 7' in out)
     (folder/'foundations-serial.log').write_text(log())
     stop();boot();out=command('hello aurora' if args.foundations_only else './demo');check('Guest-built executable survives VM restart',('Hello, aurora!' if args.foundations_only else 'Compiled by GCC inside Aurora!') in out)
     out=command('hello aurora');check('Original Aurora SDK applications still run','Hello, aurora!' in out)

@@ -1,7 +1,7 @@
 """End-to-end GNU shell and filesystem checks in an isolated Aurora VM."""
 import argparse,importlib.util,json,shutil,subprocess,time,struct,os
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--self-host',action='store_true');parser.add_argument('--self-host-only',action='store_true');parser.add_argument('--resume',action='store_true');parser.add_argument('--tools-only',action='store_true');parser.add_argument('--intx',action='store_true');parser.add_argument('--nm');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--self-host',action='store_true');parser.add_argument('--self-host-only',action='store_true');parser.add_argument('--resume',action='store_true');parser.add_argument('--tools-only',action='store_true');parser.add_argument('--backport-only',action='store_true');parser.add_argument('--intx',action='store_true');parser.add_argument('--nm');args=parser.parse_args()
 folder=Path('build/development-intx-tests' if args.intx else 'build/development-tests');folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img')
 if not args.resume:shutil.copyfile(args.disk,folder/'development.img')
@@ -47,6 +47,18 @@ try:
             time.sleep(.2)
     wait(lambda:'desktop ready' in log());q.key('f2')
     check('GPT, ext2 and FAT32 mounted','GPT:' in log() and 'EXT2:' in log() and 'FAT32:' in log())
+    if args.backport_only:
+        out=command('bash backport-musl.sh',600)
+        check('Pinned musl fork fix compiled and installed inside Aurora','AURORA_MUSL_FORK_BACKPORT_INSTALLED' in out and 'Application exited: 0' in out and '/cc1' in out)
+        out=command('gcc -static -pthread foundations.c -o foundations')
+        check('Thread regression linked against backported libc','Application exited: 0' in out)
+        out=command('./foundations',180)
+        check('Thread, shared-memory and COW regression exits successfully','Application exited: 0' in out)
+        for marker in ['PASS POSIX threads:','PASS robust mutex owner death','PASS shared thread heap/cwd/umask','PASS process-shared pthread synchronization','PASS 192 MiB mapping and copy-on-write']:
+            check(marker.removeprefix('PASS '),marker in out)
+        out=command('./foundations leader-exit')
+        check('Desktop waits for final thread and reports its exit status','THREAD_WORKER_FINISHED' in out and 'Application exited: 7' in out)
+        q.capture('thread-runtime-tested');completed=True;raise SystemExit(0)
     if args.self_host_only:
         out=command('bash rebuild-make.sh',1800)
         check('GNU Make rebuilt and installed inside Aurora','AURORA_GNU_MAKE_REBUILT' in out and 'Application exited: 0' in out)

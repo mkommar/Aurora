@@ -186,6 +186,7 @@ static void native_finish(u32 id,i64 code){
     tasks[id].state=DEAD;exit_codes[id]=code;
     u32 leader=p->tgid>=100?p->tgid-100:id;
     if(leader<TASK_COUNT&&native_group_refs[leader]&&!--native_group_refs[leader]){int parent=native_process[leader].parent;
+        exit_codes[leader]=code;
         if(parent>=0&&native_active[parent])native_signals(parent)->pending|=1ULL<<16;}
     if(leader<TASK_COUNT&&!native_group_refs[leader])for(u32 child=APP_FIRST;child<TASK_COUNT;child++)if(native_active[child]&&native_process[child].parent==(int)leader)native_process[child].parent=-1;
     if(p->vfork_parent>=0){tasks[p->vfork_parent].state=RUNNABLE;p->vfork_parent=-1;}
@@ -279,7 +280,7 @@ static i64 native_exec(u32 id,int index){
     u64 *stack=(u64 *)(native_phys(id)+sp-USER_BASE);*stack++=exec_argc;
     for(int i=0;i<exec_argc;i++)*stack++=argv[i];*stack++=0;
     for(int i=0;i<exec_envc;i++)*stack++=env[i];*stack++=0;memcpy(stack,aux,sizeof(aux));
-    NativeProcess *p=&native_process[id];p->min_brk=p->brk=(brk+4095)&~4095ULL;p->map_next=NATIVE_MMAP_BASE;
+    NativeProcess *p=&native_process[id];p->min_brk=p->brk=(brk+4095)&~4095ULL;p->map_next=NATIVE_MMAP_BASE;p->clear_tid=p->robust_head=0;
     NativeSignals *signals=native_signals(id);memcpy(signals->action,native_actions(id),sizeof(signals->action));p->signal_owner=id;signals->active=0;
     for(int i=1;i<65;i++)if(signals->action[i].handler!=1)memset(&signals->action[i],0,sizeof(NativeSigaction));
     ns_copy(p->exe,NFILES[index].path);
