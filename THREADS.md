@@ -105,6 +105,29 @@ gcc -static -pthread foundations.c -o foundations
 ./foundations
 ```
 
+## Recorded validation (2026-09-17)
+
+| Suite | Passing checks |
+| --- | ---: |
+| Native GCC, pthreads, COW and checked shutdown | 24 |
+| Original applications and storage | 24 |
+| Microkernel isolation | 28 |
+| GUI | 12 |
+| GNU tools and MSI-X storage | 25 |
+| INTx fallback | 11 |
+| In-Aurora musl backport | 10 |
+
+All 134 checks pass. Independent read-only `e2fsck -f -n` and `fsck.fat -n`
+checks are clean. Both interrupt routes record sleeping disk callers and IRQ
+completions with zero timeouts. The compiler harness now explicitly checks
+`sync` before reboot and shutdown; previously its abrupt QEMU exit left stale
+free-space summaries, reproducing the documented lack of power-loss recovery.
+
+`build/thread-runtime-validation.json` records counts, IRQ counters and image
+hashes. `build/development.manifest.json` records source and backport provenance.
+The previous default disk and manifest are retained as
+`build/development-before-thread-runtime.img` and its companion manifest.
+
 ## Limits
 
 This remains a bounded single-CPU compatibility implementation, not full POSIX
