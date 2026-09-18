@@ -3,6 +3,12 @@
 #include "abi.h"
 #include "images.h"
 #include "network_api.h"
+#include "radeon_service.h"
+static int radeon_present;
+static u16 radeon_device;
+static u32 radeon_bar0, radeon_irq, radeon_generation;
+static u64 radeon_mmio, radeon_vram;
+static int radeon_flr, radeon_irq_cap;
 #define NX (1ULL<<63)
 #define PRESENT 1ULL
 #define WRITE 2ULL
@@ -134,6 +140,8 @@ static void create_task(u32 id,const u8 *image,u64 size,u64 text_end,u64 ro_end,
     }
     if(id==DESKTOP||id==DISPLAY)
         for(int i=8;i<10;i++)pd[i]=(u64)i*0x200000|PRESENT|USER|HUGE|NX|(id==DESKTOP?WRITE:0);
+    if(id==DISPLAY&&radeon_present)
+        pd[RADEON_RING_ADDRESS/0x200000]=(RADEON_RING_ADDRESS/0x200000)*0x200000ULL|PRESENT|USER|WRITE|HUGE|NX;
     if(id==DISPLAY) {
         u64 first=framebuffer/0x200000,last=(framebuffer+SURFACE_BYTES-1)/0x200000;
         for(u64 i=first;i<=last;i++)pd[i]=i*0x200000|PRESENT|WRITE|USER|HUGE|NX;
@@ -141,7 +149,10 @@ static void create_task(u32 id,const u8 *image,u64 size,u64 text_end,u64 ro_end,
     memset((void *)physical(id),0,USER_SIZE);memcpy((void *)physical(id),image,size);
     BootInfo *boot=(BootInfo *)(physical(id)+BOOT_ADDRESS-USER_BASE);
     boot->id=id;
-    if(id==DISPLAY){boot->framebuffer=framebuffer;boot->pitch=*(volatile u16 *)0x910/4;}
+    if(id==DISPLAY){boot->framebuffer=framebuffer;boot->pitch=*(volatile u16 *)0x910/4;
+        boot->display_features=radeon_present?1:0;boot->radeon_mmio=radeon_mmio;boot->radeon_vram=radeon_vram;
+        boot->radeon_irq=radeon_irq_cap?radeon_irq:0;boot->gpu_ring=radeon_present?RADEON_RING_ADDRESS:0;
+        boot->radeon_device=radeon_device;boot->radeon_generation=radeon_generation;boot->gpu_ring_entries=RADEON_RING_ENTRIES;}
     if(id==DESKTOP)memcpy(boot->font,(const void *)0x70000,4096);
     tasks[id].frame=(Frame){.rip=USER_BASE,.cs=0x23,.flags=0x202,.rsp=0x600000,.ss=0x1b};
     serial("TASK ring3 id=");hex(id);serial(" cr3=");hex(root);serial("\r\n");
@@ -214,6 +225,7 @@ static void filesystem_leave(void){
     filesystem_owner=-1;for(int i=0;i<TASK_COUNT;i++)if(tasks[i].state==WAIT_FS)tasks[i].state=RUNNABLE;
 }
 #include "native.h"
+#include "radeon.h"
 Frame *final_context(Frame *frame){
     /* A syscall may select its own task on an otherwise idle AP. Deliver
        pending signals after releasing the filesystem mutex, before IRET. */
@@ -336,6 +348,7 @@ void kernel_main(void) {
     native_fs_init();
     u64 fb=*(volatile u32 *)0x928;
     if(fb<0x80000000||fb+SURFACE_BYTES>0x100000000ULL||*(volatile u16 *)0x910!=4096)panic("Unsupported framebuffer layout");
+    radeon_init();
     create_task(DESKTOP,desktop_image,desktop_image_size,DESKTOP_TEXT_END,DESKTOP_RO_END,fb);
     create_task(INPUT,input_image,input_image_size,INPUT_TEXT_END,INPUT_RO_END,fb);
     create_task(DISPLAY,display_image,display_image_size,DISPLAY_TEXT_END,DISPLAY_RO_END,fb);

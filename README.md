@@ -180,7 +180,7 @@ This is a small OS with microkernel-style service isolation and an initial
 in-kernel storage implementation. Native applications use a BIOS-backed page
 allocator and musl's dynamic linker. The development profile includes VirtIO-net,
 IPv4/DHCP, DNS, and curl with verified TLS; see [NETWORK.md](NETWORK.md).
-Automatic service restart remains unimplemented. The separate SDK runtime supplies a fixed 128 KiB heap. The terminal and notes
+Automatic service restart remains unimplemented. Radeon PCI display controllers are detected at boot; known-safe hardware uses the aligned accelerated scanout path while unknown hardware keeps the VBE framebuffer fallback. Generation-specific Radeon command processors are not enabled yet. The separate SDK runtime supplies a fixed 128 KiB heap. The terminal and notes
 share the desktop process. Scheduling is
 preemptive, but PS/2 input still uses polling and can consume a host CPU core.
 It targets BIOS QEMU with one to eight CPUs, 128 MiB RAM (1 GiB for GCC) and standard VGA, not UEFI or

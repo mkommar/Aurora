@@ -25,6 +25,9 @@ enum { ERR_CAP=-1, ERR_POINTER=-2, ERR_FULL=-3, ERR_DEAD=-4, ERR_SYSCALL=-5,
 enum { USER_BASE=0x400000, USER_SIZE=0x200000, BOOT_ADDRESS=0x5d0000,
        SURFACE_ADDRESS=0x1000000, SURFACE_BYTES=1024*768*4 };
 typedef struct { u64 sender, type, a, b, c; } Message;
-typedef struct { u64 id, framebuffer, pitch; u8 font[4096]; } BootInfo;
+typedef struct { u64 id, framebuffer, pitch, display_features;
+                 u64 radeon_mmio, radeon_vram, radeon_irq, gpu_ring;
+                 u32 radeon_device, radeon_generation, gpu_ring_entries;
+                 u8 font[4096]; } BootInfo;
 #define BOOT ((const BootInfo *)BOOT_ADDRESS)
 #endif

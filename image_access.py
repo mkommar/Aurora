@@ -69,7 +69,8 @@ def put_ext2_files(image,files):
         lib.au_attach(transfer);check(lib.au_mount())
         try:
             for path,data in files.items():
-                error=lib.au_put(path.encode(),data,len(data),0o755 if path.endswith('.sh') else 0o644)
+                executable=path.endswith('.sh') or path in ('/bin/curl','/work/rebuild-network.sh')
+                error=lib.au_put(path.encode(),data,len(data),0o755 if executable else 0o644)
                 if error:raise RuntimeError(f'ext2 image write {path}: error {error}')
         finally:check(lib.au_close())
         disk.flush()
