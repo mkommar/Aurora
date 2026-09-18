@@ -1,4 +1,4 @@
-/* Host-only image writer using the same pinned filesystem implementation. */
+/* Host-only artifact access using the same pinned filesystem implementation. */
 #include <ext4.h>
 #include <ext4_mkfs.h>
 typedef int (*sector_callback)(void *,uint64_t,uint32_t,int);
@@ -15,6 +15,12 @@ __declspec(dllexport) int au_format(sector_callback callback){
     return ext4_mkfs(&fs,&device,&info,2);
 }
 __declspec(dllexport) int au_mount(void){int r=ext4_device_register(&device,"image");if(!r)r=ext4_mount("image","/",0);if(!r)r=ext4_cache_write_back("/",1);return r;}
+__declspec(dllexport) int au_mount_readonly(void){int r=ext4_device_register(&device,"image");return r?r:ext4_mount("image","/",1);}
+__declspec(dllexport) int au_get(const char *path,void *data,uint64_t capacity,uint64_t *size){
+    ext4_file f;int r=ext4_fopen(&f,path,"r");if(r)return r;*size=ext4_fsize(&f);size_t done=0;
+    if(data)r=capacity<*size?27:ext4_fread(&f,data,*size,&done);
+    int close=ext4_fclose(&f);return r?r:close?close:data&&done!=*size?5:0;
+}
 __declspec(dllexport) int au_mkdir(const char *path){return ext4_dir_mk(path);}
 __declspec(dllexport) int au_put(const char *path,const void *data,uint64_t size,uint32_t mode){
     ext4_file f;int r=ext4_fopen(&f,path,"w");if(r)return r;size_t done=0;
