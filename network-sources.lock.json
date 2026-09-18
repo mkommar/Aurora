@@ -1,0 +1,18 @@
+{
+  "lwip-2.2.1.tar.gz": {
+    "url": "https://github.com/lwip-tcpip/lwip/archive/refs/tags/STABLE-2_2_1_RELEASE.tar.gz",
+    "sha256": "ce0b7461c0ad9602c376f0bf07c5eb7253b48c7bf66f011c6bf3e2a96731c539"
+  },
+  "curl-8.22.0.tar.gz": {
+    "url": "https://curl.se/download/curl-8.22.0.tar.gz",
+    "sha256": "d54dd598bf05927a726deb38df31c6a255ba83ff1de57c5d1464dac3ed8f44a1"
+  },
+  "cacert.pem": {
+    "url": "https://curl.se/ca/cacert.pem",
+    "sha256": "f66dff1bdf8f96060b8177976f8b7d9254bc89bc4db933d769f7384d28480bc9"
+  },
+  "mbedtls-3.6.7.tar.bz2": {
+    "url": "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2",
+    "sha256": "a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6"
+  }
+}
