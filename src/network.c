@@ -61,7 +61,7 @@ void network_input(const void *packet,unsigned length){
     if(interface.input(p,&interface)!=ERR_OK){pbuf_free(p);network_rx_drops++;}
 }
 void network_tick(void){if(initialized)sys_check_timeouts();}
-static void tcp_error(void *argument,err_t error){NetSocket *s=argument;s->tcp=0;s->connecting=0;s->error=error_number(error);s->eof=1;}
+static void tcp_error(void *argument,err_t error){NetSocket *s=argument;s->tcp=0;s->error=s->connecting&&error==ERR_RST?111:error_number(error);s->connecting=0;s->eof=1;}
 static err_t connected(void *argument,struct tcp_pcb *pcb,err_t error){
     NetSocket *s=argument;(void)pcb;s->connecting=0;s->error=error_number(error);s->connected=error==ERR_OK;
     if(s->connected)network_connections++;return ERR_OK;
@@ -168,7 +168,12 @@ int network_option(int handle,int level,int option,void *value,unsigned *length,
 }
 int network_shutdown(int handle,int how){
     NetSocket *s=get_socket(handle);if(!s)return -9;if(how<0||how>2)return -22;if(!s->connected)return -107;
-    if(s->tcp){err_t error=tcp_shutdown(s->tcp,how!=1,how!=0);if(error)return -error_number(error);}
+    if(s->tcp){
+        if(how==2||(how==1&&s->read_closed)||(how==0&&s->write_closed)){
+            struct tcp_pcb *pcb=s->tcp;tcp_arg(pcb,0);tcp_recv(pcb,0);tcp_err(pcb,0);
+            if(tcp_close(pcb)!=ERR_OK)tcp_abort(pcb);s->tcp=0;
+        }else{err_t error=tcp_shutdown(s->tcp,how!=1,how!=0);if(error)return -error_number(error);}
+    }
     if(how!=1){s->read_closed=1;if(s->received){pbuf_free(s->received);s->received=0;}}
     if(how!=0)s->write_closed=1;return 0;
 }

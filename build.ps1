@@ -47,10 +47,11 @@ foreach ($service in $services) {
 [IO.File]::WriteAllLines("$PSScriptRoot/$output/images.asm",$bundle)
 Invoke-Checked $nasm @('-f','elf64',"$output/images.asm",'-o',"$output/images.o")
 . "$PSScriptRoot/build-filesystem.ps1"
-$kernelFlags = $flags + $fsFlags + @('-I',$output)
+. "$PSScriptRoot/build-network.ps1"
+$kernelFlags = $flags + $fsFlags + @('-I',$output,'-Os')
 if ($SelfTest) { $kernelFlags += '-DAURORA_SELF_TEST=1' }
 Invoke-Checked "$LlvmBin/clang.exe" ($kernelFlags + @('-c','src/kernel.c','-o',"$output/kernel.o"))
-Invoke-Checked "$LlvmBin/ld.lld.exe" (@('-nostdlib','--gc-sections','-T','src/linker.ld',"$output/entry.o", "$output/traps.o", "$output/kernel.o", "$output/images.o") + $fsObjects + @('-o',"$output/kernel.elf"))
+Invoke-Checked "$LlvmBin/ld.lld.exe" (@('-nostdlib','--gc-sections','-T','src/linker.ld',"$output/entry.o", "$output/traps.o", "$output/kernel.o", "$output/images.o") + $fsObjects + $netObjects + @('-o',"$output/kernel.elf"))
 Invoke-Checked "$LlvmBin/llvm-objcopy.exe" @('-O','binary',"$output/kernel.elf", "$output/kernel.bin")
 $kernel = [IO.File]::ReadAllBytes("$PSScriptRoot/$output/kernel.bin")
 if ($kernel.Length -gt 245760) { throw 'Kernel + service bundle exceeds loader limit of 480 sectors.' }

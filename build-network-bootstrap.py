@@ -22,7 +22,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         (root/'network-bootstrap.tar.gz').write_bytes(data);self.send_response(200);self.end_headers();self.wfile.write(b'OK')
 server=http.server.ThreadingHTTPServer(('127.0.0.1',8879),functools.partial(Handler,directory=str(root)))
 threading.Thread(target=server.serve_forever,daemon=True).start()
-cmd=['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel','whpx','-cpu','qemu64','-smp','2','-m','1536M',
+cmd=['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel','whpx','-cpu','qemu64','-smp','2','-m','4G',
     '-kernel',str(b.ROOT/'vmlinuz-virt'),'-initrd',str(b.ROOT/'builder-initramfs.gz'),'-append','console=ttyS0 rdinit=/init panic=1',
     '-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0','-display','none','-serial',f'file:{root}/builder.log','-no-reboot']
 try:

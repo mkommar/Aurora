@@ -2,6 +2,7 @@
  * This is Aurora code: no Linux kernel or host-side compilation service runs. */
 #include "rtc_time.h"
 #include "virtio_block.h"
+#include "virtio_net.h"
 #include "native_fs.h"
 #define NATIVE_SIZE 0x20000000ULL
 #define NATIVE_MMAP_BASE 0x10000000ULL
@@ -191,6 +192,7 @@ static void native_close(u32 id,int fd){
     NativeFd *f=&native_process[id].fd[fd];
     int file_index=f->kind==1?f->index:-1;
     if(f->description&&native_descriptions[f->description].refs)native_descriptions[f->description].refs--;
+    if(f->kind==6&&!native_descriptions[f->description].refs)network_close(f->index);
     if(f->kind==2&&native_pipes[f->index].readers)native_pipes[f->index].readers--;
     if(f->kind==3&&native_pipes[f->index].writers)native_pipes[f->index].writers--;
     memset(f,0,sizeof(*f));
@@ -281,7 +283,7 @@ static i64 native_exec(u32 id,int index){
     u64 *argv=exec_argv,env[128],sp=NATIVE_END-32;
     for(int i=exec_envc-1;i>=0;i--){u64 n=ns_length(exec_env[i])+1;sp-=n;memcpy((void *)(native_phys(id)+sp-USER_BASE),exec_env[i],n);env[i]=sp;}
     for(int i=exec_argc-1;i>=0;i--){u64 n=ns_length(exec_args[i])+1;sp-=n;memcpy((void *)(native_phys(id)+sp-USER_BASE),exec_args[i],n);argv[i]=sp;}
-    sp-=16;u64 random_address=sp;memset((void *)(native_phys(id)+sp-USER_BASE),0x57,16);
+    sp-=16;u64 random_address=sp;void *random=(void *)(native_phys(id)+sp-USER_BASE);memset(random,0,16);if(entropy_ready)entropy_fill(random,16);
     u64 aux[]={3,main.phaddr,4,sizeof(ElfSegment),5,main.header.phnum,6,4096,7,loader>=0?interpreter.bias:0,9,main.entry,11,1000,12,1000,13,1000,14,1000,23,0,25,random_address,31,exec_argc?argv[0]:0,0,0};
     u64 words=1+exec_argc+1+exec_envc+1+sizeof(aux)/8;sp=(sp-words*8)&~15ULL;
     u64 *stack=(u64 *)(native_phys(id)+sp-USER_BASE);*stack++=exec_argc;
@@ -392,6 +394,9 @@ static i64 native_remove_directory(const char *path){
 static int native_fd_allocate(void){for(int i=0;i<NATIVE_FDS;i++)if(!native_process[current_task].fd[i].kind)return i;return -24;}
 static i64 native_open(const char *path,u32 flags,u32 mode){
     NativeProcess *p=&native_process[current_task];int fd=native_fd_allocate();if(fd<0)return fd;
+    if(ns_equal(path,"/dev/urandom")||ns_equal(path,"/dev/random")){
+        if(flags&3)return -13;if(!entropy_ready)return -19;int description=native_description(flags);if(!description)return -23;
+        p->fd[fd]=(NativeFd){.kind=7,.description=description,.flags=flags&0x80000U};return fd;}
     int index=native_find(path);
     if(index<0){if(!(flags&64))return -2;index=native_create(path);if(index<0)return index;
         *(u32 *)NFILES[index].pad=mode&0777&~p->umask;*(u32 *)(NFILES[index].pad+4)=1;if(!native_commit(index))return -5;}
@@ -435,7 +440,15 @@ static i64 native_io(u64 descriptor,u64 address,u64 size,int write){
     if(descriptor>=NATIVE_FDS)return -9;NativeFd *f=&native_process[current_task].fd[descriptor];if(!f->kind)return -9;
     NativeDescription *of=&native_descriptions[f->description];
     if((write&&!(of->flags&3))||(!write&&(of->flags&3)==1))return -9;
+    if(f->kind==8&&size<8)return -22;
     if(!size)return 0;void *buffer=native_buffer(current_task,address,size,!write);if(!buffer)return -14;
+    if(f->kind==6)return write?network_send(f->index,buffer,size,0,0,0):network_recv(f->index,buffer,size,0,0,0);
+    if(f->kind==7)return write?-9:entropy_fill(buffer,size>256?256:size);
+    if(f->kind==8){
+        if(write){u64 value=*(u64 *)buffer;if(value==~0ULL)return -22;if(value>~1ULL-of->offset)return -11;of->offset+=value;}
+        else{if(!of->offset)return -11;*(u64 *)buffer=f->index?1:of->offset;if(f->index)of->offset--;else of->offset=0;}
+        return 8;
+    }
     if(f->kind==4){if(write)return native_console(buffer,size);NativeTty *tty=NATIVE_TTY;
         if((int)tty->foreground!=native_process[current_task].pgid){native_signal_queue(current_task,21);return -11;}
         if(tty->eof){tty->eof=0;return 0;}if(!tty->ready)return -11;if(size>tty->ready)size=tty->ready;
@@ -503,6 +516,7 @@ static i64 native_exec_call(u64 path_address,u64 argv_address,u64 env_address){
 }
 static i64 native_sync(void){int error=ext2_ready?ext2_sync():0;if(error)return -error;return (virtio_present?virtio_transfer(0,0,0,4):disk_flush())?0:-5;}
 #include "native_wait.h"
+#include "native_network.h"
 #include "native_threads.h"
 static void native_mark_group(u32 id,i64 code){
     u32 group=native_process[id].tgid;
@@ -523,9 +537,17 @@ static Frame *native_dispatch(Frame *f){
         if(waiting->kind==5&&waiting->address&&!waiting->extra[0]){u64 *left=native_buffer(current_task,waiting->address,16,1);if(left){u64 ticks=waiting->deadline>timer_ticks?waiting->deadline-timer_ticks:0;left[0]=ticks/100;left[1]=(ticks%100)*10000000;}}
         native_wait_reset(current_task);tasks[current_task].frame.rax=-4;return schedule();}
     switch(n){
+    case 41:case 42:case 43:case 44:case 45:case 46:case 47:case 48:case 49:case 50:case 51:case 52:case 53:case 54:case 55:
+        result=native_network(n,a,b,c,d,e,g);break;
     case 7:case 271:result=native_poll_call(n,a,b,c,d,e);break;
     case 23:case 270:result=native_select_call(n,a,b,c,d,e,g);break;
     case 35:case 230:result=native_sleep_call(n,a,b,c,d);break;
+    case 284:case 290:{
+        u64 flags=n==290?b:0;if(flags&~(0x80000ULL|0x800ULL|1ULL)){result=-22;break;}
+        int fd=native_fd_allocate();if(fd<0){result=fd;break;}int description=native_description(2|(flags&0x800));
+        if(!description){result=-23;break;}native_descriptions[description].offset=(u32)a;
+        p->fd[fd]=(NativeFd){.kind=8,.index=flags&1,.description=description,.flags=flags&0x80000};result=fd;break;
+    }
     case 0:case 1:result=native_io(a,b,c,n==1);break;
     case 2:case 257:{u64 address=n==2?a:b;u32 flags=n==2?b:c;
         result=native_at_path(n==257?(i64)a:-100,address,path);if(!result)result=native_open(path,flags,n==257?d:c);break;}
@@ -566,7 +588,10 @@ static Frame *native_dispatch(Frame *f){
         tasks[current_task].frame=s->saved;p->sigmask=s->mask;memcpy(task_fp[current_task],s->fp,512);s->active=s->on_alt=0;return schedule();}
     case 14:if(d!=8){result=-22;break;}if(c){u64 *out=native_buffer(current_task,c,8,1);if(!out){result=-14;break;}*out=p->sigmask;}
         if(b){u64 *in=native_buffer(current_task,b,8,0);if(!in){result=-14;break;}if(a==0)p->sigmask|=*in;else if(a==1)p->sigmask&=~*in;else if(a==2)p->sigmask=*in;else{result=-22;break;}}p->sigmask&=~((1ULL<<8)|(1ULL<<18));result=0;break;
-    case 16:{if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}if(p->fd[a].kind!=4){result=-25;break;}NativeTty *tty=NATIVE_TTY;
+    case 16:{if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}
+        if(p->fd[a].kind==6){if(b!=0x541b&&b!=0x5421){result=-25;break;}u32 *value=native_buffer(current_task,c,4,b==0x541b);if(!value){result=-14;break;}
+            if(b==0x541b)*value=network_available(p->fd[a].index);else{NativeDescription *of=&native_descriptions[p->fd[a].description];of->flags=(of->flags&~0x800U)|(*value?0x800:0);}result=0;break;}
+        if(p->fd[a].kind!=4){result=-25;break;}NativeTty *tty=NATIVE_TTY;
         u64 length=b==0x5401||b==0x5402||b==0x5403||b==0x5404?36:b==0x5413?8:4;
         if(b==0x540e){result=0;break;}if(b==0x540b){tty->size=tty->ready=tty->eof=0;result=0;break;}
         void *buffer=native_buffer(current_task,c,length,b==0x5401||b==0x540f||b==0x5413||b==0x541b||b==0x5424);
@@ -723,7 +748,7 @@ static Frame *native_dispatch(Frame *f){
         if(id<APP_FIRST||id>=TASK_COUNT||!native_active[id]||tasks[id].state==DEAD){result=-3;break;}
         u64 *head=native_buffer(current_task,b,8,1),*length=native_buffer(current_task,c,8,1);
         if(!head||!length){result=-14;break;}*head=native_process[id].robust_head;*length=24;result=0;break;}
-    case 318:{u8 *out=native_buffer(current_task,a,b,1);if(!out){result=-14;break;}u64 value=timer_ticks^0x9e3779b97f4a7c15ULL;for(u64 i=0;i<b;i++){value^=value<<13;value^=value>>7;value^=value<<17;out[i]=(u8)value;}result=b;break;}
+    case 318:{if(c&~3ULL){result=-22;break;}if(!b){result=0;break;}if(b>256)b=256;u8 *out=native_buffer(current_task,a,b,1);result=out?entropy_fill(out,b):-14;break;}
     default:serial("NATIVE unsupported syscall=");hex(n);serial("\r\n");break;
     }
     if(result==-4096){tasks[current_task].frame.rip-=2;tasks[current_task].state=WAIT_EVENT;return schedule();}

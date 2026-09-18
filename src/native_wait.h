@@ -11,6 +11,8 @@ static void native_wait_reset(u32 id){
 static u32 native_readiness(u32 id,int fd){
     if(fd<0||fd>=NATIVE_FDS||!native_process[id].fd[fd].kind)return 32;
     NativeFd *f=&native_process[id].fd[fd];
+    if(f->kind==6)return network_readiness(f->index);
+    if(f->kind==8){u64 value=native_descriptions[f->description].offset;return (value?1:0)|(value<~1ULL?4:0);}
     if(f->kind==2){NativePipe *p=&native_pipes[f->index];return (p->size?1:0)|(!p->writers?16:0);}
     if(f->kind==3){NativePipe *p=&native_pipes[f->index];return !p->readers?8:p->size<NATIVE_PIPE_CAPACITY?4:0;}
     u32 mode=native_descriptions[f->description].flags&3;

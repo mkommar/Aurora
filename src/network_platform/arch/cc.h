@@ -3,6 +3,7 @@
 #include <stddef.h>
 #define BYTE_ORDER LITTLE_ENDIAN
 #define LWIP_NO_INTTYPES_H 1
+#define LWIP_NO_CTYPE_H 1
 #define LWIP_PLATFORM_DIAG(x) do {} while(0)
 void aurora_net_panic(const char *);
 uint32_t aurora_net_random(void);

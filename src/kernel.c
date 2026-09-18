@@ -2,6 +2,7 @@
  * Desktop/input/display run in ring 3; storage remains a kernel compatibility path. */
 #include "abi.h"
 #include "images.h"
+#include "network_api.h"
 #define NX (1ULL<<63)
 #define PRESENT 1ULL
 #define WRITE 2ULL
@@ -44,6 +45,7 @@ static void *native_buffer(u32 id,u64 address,u64 size,int write);
 static void native_signal_deliver(u32 id);
 static void native_finish(u32 id,i64 code);
 static void native_wake_waiters(void);
+static void net_poll(void);
 static Gate idt[256];
 
 /* Named counters are also consumed by the QMP integration tests. */
@@ -190,6 +192,7 @@ static int port_allowed(u64 port,u64 width,int read) {
 }
 Frame *schedule(void) {
     compatibility_enter();
+    net_poll();
     native_wake_waiters();
     u32 old=current_task;u32 cpu=cpu_local()->index;
     if(old<TASK_COUNT)task_cpu[old]=-1;
@@ -244,8 +247,8 @@ Frame *trap_dispatch(Frame *frame) {
     if(t->state==DEAD||t->state==STOPPED)return schedule();
     if(frame->vector==62){cpu_rendezvous[cpu_local()->index]++;if(local_apic)local_apic[0xb0/4]=0;return schedule();}
     if(frame->vector==32) { timer_ticks++;for(u32 i=1;i<cpu_count;i++)if(cpus[i].online)cpu_ipi(cpus[i].apic_id,62);virtio_timeout();task_preemptions[current_task]++;outb(0x20,0x20);return schedule(); }
-    if(frame->vector>=33&&frame->vector<48){virtio_interrupt(frame->vector-32);if(frame->vector>=40)outb(0xa0,0x20);outb(0x20,0x20);return schedule();}
-    if(frame->vector>=48&&frame->vector<64){if(frame->vector!=63){virtio_interrupt(frame->vector);if(local_apic)local_apic[0xb0/4]=0;}return schedule();}
+    if(frame->vector>=33&&frame->vector<48){virtio_interrupt(frame->vector-32);net_interrupt(frame->vector-32);if(frame->vector>=40)outb(0xa0,0x20);outb(0x20,0x20);return schedule();}
+    if(frame->vector>=48&&frame->vector<64){if(frame->vector!=63){virtio_interrupt(frame->vector);net_interrupt(frame->vector);if(local_apic)local_apic[0xb0/4]=0;}return schedule();}
     if(frame->vector!=128) {
         u64 address=0;if(frame->vector==14)__asm__ volatile("mov %%cr2,%0":"=r"(address));
         if(frame->vector==14&&native_write_fault(current_task,address,frame->error))return &t->frame;
@@ -261,6 +264,8 @@ Frame *trap_dispatch(Frame *frame) {
            the filesystem mutex. Mapping/lifetime and descriptor changes still
            do, since a sleeping driver may retain an alias into their buffers. */
         u64 n=frame->rax;int needs_fs=!(n==7||n==23||n==24||n==35||n==96||n==115||n==131||n==202||n==203||n==204||n==218||n==228||n==229||n==230||n==270||n==271||n==273||n==274||n==309);
+        if((n>=41&&n<=55)||n==318||n==284||n==290)needs_fs=0;
+        if((n==0||n==1||n==3||n==5||n==16||n==19||n==20||n==72)&&frame->rdi<NATIVE_FDS&&native_process[current_task].fd[frame->rdi].kind>=6)needs_fs=0;
         if(needs_fs)filesystem_enter();Frame *next=native_dispatch(frame);if(needs_fs)filesystem_leave();return next;
     }
     int fs_call=frame->rax==SYS_NATIVE_SPAWN||frame->rax==SYS_NATIVE_READ||frame->rax==SYS_NATIVE_WRITE||frame->rax==SYS_NATIVE_LIST||frame->rax==SYS_SYNC;
@@ -318,6 +323,7 @@ static void timer_init(void) {
     outb(0x21,0xfe);outb(0xa1,0xff);
     outb(0x43,0x36);outb(0x40,11932&255);outb(0x40,11932>>8);
     if(virtio_ready&&!virtio_message_mode&&virtio_irq_line>0&&virtio_irq_line<16){u16 mask=0xfffe;mask&=~(1U<<virtio_irq_line);if(virtio_irq_line>=8)mask&=~4U;outb(0x21,mask);outb(0xa1,mask>>8);}
+    if(net_ready&&!net_irq_mode&&net_irq_line>0&&net_irq_line<16){u16 mask=inb(0x21)|((u16)inb(0xa1)<<8);mask&=~(1U<<net_irq_line);if(net_irq_line>=8)mask&=~4U;outb(0x21,mask);outb(0xa1,mask>>8);}
 }
 void kernel_main(void) {
     outb(0x3f9,0);outb(0x3fb,0x80);outb(0x3f8,1);outb(0x3f9,0);
@@ -334,6 +340,7 @@ void kernel_main(void) {
     create_task(INPUT,input_image,input_image_size,INPUT_TEXT_END,INPUT_RO_END,fb);
     create_task(DISPLAY,display_image,display_image_size,DISPLAY_TEXT_END,DISPLAY_RO_END,fb);
     native_memory_init();
+    if(native_ready){entropy_init();virtio_net_init();}
 #ifdef AURORA_SELF_TEST
     for(int i=3;i<10;i++)create_task(i,probe_image,probe_image_size,PROBE_TEXT_END,PROBE_RO_END,fb);
 #endif

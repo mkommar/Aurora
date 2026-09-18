@@ -5,6 +5,7 @@
 #include <stdint.h>
 typedef struct Block {size_t size;struct Block *next;int used;} Block;
 static Block *heap;
+int atoi(const char *s){while(*s==' '||(*s>='\t'&&*s<='\r'))s++;int negative=*s=='-';if(*s=='-'||*s=='+')s++;unsigned value=0;while(*s>='0'&&*s<='9')value=value*10+(unsigned)(*s++-'0');return negative?(int)(0U-value):(int)value;}
 void *malloc(size_t size){
     if(!size||size>0x1000000-sizeof(Block))return 0;size=(size+15)&~(size_t)15;
     if(!heap){heap=(Block *)0x0b000000;*heap=(Block){.size=0x1000000-sizeof(Block)};}
