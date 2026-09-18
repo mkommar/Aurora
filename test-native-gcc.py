@@ -92,7 +92,7 @@ try:
         check(marker.removeprefix('PASS '),marker in out)
     if args.cpus>1 and magic!=b'AURDEV01':
         out=command('gcc -static -pthread smp.c -o smp');check('SMP regression compiles inside Aurora','Application exited: 0' in out)
-        out=command('./smp');check('Pinned threads, GS isolation, remote protection changes and COW','PASS SMP pinned pthreads' in out and 'PASS SMP fork/COW' in out and 'Application exited: 0' in out)
+        out=command('./smp');check('Pinned threads, GS isolation, remote protection changes and COW','PASS SMP pinned pthreads' in out and 'PASS SMP fork/COW' in out and 'PASS remote CPU loses stale write permission' in out and 'Application exited: 0' in out)
     out=command('./foundations leader-exit');check('Desktop waits for final thread and preserves exit status','THREAD_WORKER_FINISHED' in out and 'Application exited: 7' in out)
     (folder/'foundations-serial.log').write_text(log())
     out=command('sync');check('Filesystem flush succeeds before reboot','Application exited: 0' in out)

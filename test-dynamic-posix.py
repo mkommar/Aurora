@@ -101,7 +101,7 @@ try:
     out=command('./dyn');check('Dynamic linker, TLS and POSIX regression','PASS dynamic PIE' in out and 'PASS POSIX groups' in out and 'PASS malformed ELF' in out and 'PASS patched dynamic fork' in out and 'PASS pselect timeout' in out and 'Application exited: 0' in out)
     if args.cpus>1:
         out=command('gcc -static -O2 -pthread smp.c -o smp');check('Guest builds SMP regression','Application exited: 0' in out)
-        out=command('./smp');check('Multicore pthreads and COW','PASS SMP pinned pthreads' in out and 'PASS SMP fork/COW' in out and 'Application exited: 0' in out)
+        out=command('./smp');check('Multicore pthreads and COW','PASS SMP pinned pthreads' in out and 'PASS SMP fork/COW' in out and 'PASS remote CPU loses stale write permission' in out and 'Application exited: 0' in out)
     nm=r'C:\Program Files\Unity\Hub\Editor\6000.4.0f1\Editor\Data\PlaybackEngines\AndroidPlayer\NDK\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe'
     symbols={line.split()[2]:int(line.split()[0],16) for line in subprocess.check_output([nm,'-n',str(folder/'kernel.elf')],text=True).splitlines() if len(line.split())==3}
     counters={}

@@ -34,7 +34,9 @@ protected:
     wrmsr
     mov eax,cr0
     or eax,0x80010003
-    and eax,~12
+    ; INIT leaves CD/NW set. Enable caching before entering the shared kernel.
+    and eax,~(12 | 0x60000000)
+    wbinvd
     mov cr0,eax
     jmp 24:long_mode
 bits 64

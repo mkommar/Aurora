@@ -12,6 +12,7 @@ extern schedule
 global syscall_entry
 syscall_entry:
     swapgs
+    lfence
     mov [gs:16], rsp
     mov rsp, [gs:8]
     push qword 0x1b
@@ -83,6 +84,7 @@ trap_common:
 trap_syscall:
     PUSH_REGISTERS
 context_entry:
+    lfence
     cld
     mov rbx, rsp
     mov eax, 0x200000
