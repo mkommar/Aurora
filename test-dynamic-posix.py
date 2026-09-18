@@ -96,7 +96,7 @@ try:
     out=command('gcc -shared -fPIC lib.c -o libprobe.so');check('Guest builds shared library','Application exited: 0' in out)
     out=command('gcc -shared -fPIC plugin.c -o plugin.so');check('Guest builds runtime-loaded plugin','Application exited: 0' in out)
     out=command('gcc -fPIE -pie -pthread dyn.c ./libprobe.so -o dyn');check('Guest builds dynamically linked PIE','Application exited: 0' in out)
-    out=command('./dyn');check('Dynamic linker, TLS and POSIX regression','PASS dynamic PIE' in out and 'PASS POSIX groups' in out and 'PASS malformed ELF' in out and 'PASS patched dynamic fork' in out and 'Application exited: 0' in out)
+    out=command('./dyn');check('Dynamic linker, TLS and POSIX regression','PASS dynamic PIE' in out and 'PASS POSIX groups' in out and 'PASS malformed ELF' in out and 'PASS patched dynamic fork' in out and 'PASS pselect timeout' in out and 'Application exited: 0' in out)
     if args.cpus>1:
         out=command('gcc -static -O2 -pthread smp.c -o smp');check('Guest builds SMP regression','Application exited: 0' in out)
         out=command('./smp');check('Multicore pthreads and COW','PASS SMP pinned pthreads' in out and 'PASS SMP fork/COW' in out and 'Application exited: 0' in out)

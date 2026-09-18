@@ -105,6 +105,10 @@ select_context:
     jnz resume_kernel
     mov rbx, rax
     call restore_context
+    ; The old task becomes claimable when cpu_release drops the state lock.
+    ; Leave its kernel stack first, so another CPU cannot overwrite our return
+    ; address while entering that task's next syscall.
+    mov rsp, [gs:32]
     call cpu_release
     mov rsp, rbx
     jmp restore

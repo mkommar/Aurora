@@ -24,7 +24,8 @@ static void *worker(void *arg){
 }
 int main(void){
     cpu_set_t mask;assert(!sched_getaffinity(0,sizeof mask,&mask));assert(CPU_COUNT(&mask)>=2);
-    pthread_t a,b;assert(!pthread_create(&a,0,worker,(void *)0));assert(!pthread_create(&b,0,worker,(void *)1));
+    int last=0;for(int i=0;i<CPU_SETSIZE;i++)if(CPU_ISSET(i,&mask))last=i;
+    pthread_t a,b;assert(!pthread_create(&a,0,worker,(void *)0));assert(!pthread_create(&b,0,worker,(void *)(long)last));
     assert(!pthread_join(a,0));assert(!pthread_join(b,0));assert(atomic_load(&total)==2000000&&atomic_load(&finished)==2);
     puts("PASS SMP pinned pthreads, shared atomics and per-CPU TLS");
     for(int round=0;round<12;round++){
