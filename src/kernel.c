@@ -37,7 +37,7 @@ typedef struct __attribute__((packed)) {
 static Task tasks[TASK_COUNT];
 static i64 exit_codes[TASK_COUNT];
 static int native_active[TASK_COUNT];
-static u64 task_fsbase[TASK_COUNT];
+static u64 task_fsbase[TASK_COUNT],task_gsbase[TASK_COUNT];
 static u8 task_fp[TASK_COUNT][512] __attribute__((aligned(16)));
 static u8 initial_fp[512] __attribute__((aligned(16)));
 static void *native_buffer(u32 id,u64 address,u64 size,int write);
@@ -45,14 +45,13 @@ static void native_signal_deliver(u32 id);
 static void native_finish(u32 id,i64 code);
 static void native_wake_waiters(void);
 static Gate idt[256];
-static Tss tss;
-static u64 gdt[7];
+
 /* Named counters are also consumed by the QMP integration tests. */
 volatile u64 timer_ticks,ipc_messages,context_switches;
 volatile u64 task_runs[TASK_COUNT],task_faults[TASK_COUNT],task_cr3[TASK_COUNT];
 volatile u64 task_preemptions[TASK_COUNT],task_fault_addresses[TASK_COUNT];
-volatile u32 current_task;
-u64 task_kernel_sp[TASK_COUNT],kernel_stack_top=0x90000;
+u64 task_kernel_sp[TASK_COUNT];
+#include "cpu.h"
 static int kernel_started,filesystem_owner=-1;
 extern void kernel_suspend(void);
 extern void *isr_table[];
@@ -68,16 +67,19 @@ static void serial(const char *s) { while(*s){while(!(inb(0x3fd)&32)){}outb(0x3f
 static void hex(u64 n) { const char *digits="0123456789abcdef";for(int i=60;i>=0;i-=4){char s[2]={digits[(n>>i)&15],0};serial(s);} }
 static void panic(const char *s) { serial("KERNEL PANIC: ");serial(s);for(;;)__asm__ volatile("cli; hlt"); }
 static void wrmsr(u32 msr,u64 value){__asm__ volatile("wrmsr"::"c"(msr),"a"((u32)value),"d"((u32)(value>>32)));}
-void save_context(void){__asm__ volatile("fxsave64 %0":"=m"(task_fp[current_task]));}
+void save_context(void){u32 lo,hi;__asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(0xc0000102));task_gsbase[current_task]=lo|((u64)hi<<32);__asm__ volatile("fxsave64 %0":"=m"(task_fp[current_task]));}
 void restore_context(void){
-    kernel_stack_top=0x100000ULL+(current_task+1)*0x10000ULL;tss.rsp[0]=kernel_stack_top;
-    wrmsr(0xc0000100,task_fsbase[current_task]);
+    kernel_stack_top=0x100000ULL+(current_task+1)*0x10000ULL;cpu_local()->tss.rsp[0]=kernel_stack_top;
+    wrmsr(0xc0000100,task_fsbase[current_task]);wrmsr(0xc0000102,task_gsbase[current_task]);
     __asm__ volatile("fxrstor64 %0"::"m"(task_fp[current_task]));
     __asm__ volatile("mov %0,%%cr3"::"r"(task_cr3[current_task]):"memory");
 }
 static u64 physical(u32 id) { return 0x2000000ULL+(u64)id*USER_SIZE; }
 static u64 *user_table(u32 id) { return (u64 *)(task_cr3[id]+0x6000); }
-static void tables_init(void) {
+static void tables_init(u32 index) {
+    Cpu *cpu=&cpus[index];cpu->index=index;cpu->task=TASK_COUNT;cpu->stack=cpu->idle_stack=index?0x00300000ULL+(index+1)*0x10000ULL:0x90000;
+    Tss *tp=&cpu->tss;u64 *gdt=cpu->gdt;
+#define tss (*tp)
     gdt[1]=0x00af9a000000ffffULL;gdt[2]=0x00cf92000000ffffULL;
     gdt[3]=0x00cff2000000ffffULL;gdt[4]=0x00affa000000ffffULL;
     tss.rsp[0]=0x90000;
@@ -85,8 +87,9 @@ static void tables_init(void) {
     u64 base=(u64)&tss,limit=sizeof(tss)-1;
     gdt[5]=(limit&0xffff)|((base&0xffffff)<<16)|(0x89ULL<<40)|((base&0xff000000)<<32);
     gdt[6]=base>>32;
-    TablePointer gp={sizeof(gdt)-1,(u64)gdt};install_gdt(&gp);
-    for(int i=0;i<=64;i++) {
+    TablePointer gp={sizeof(cpu->gdt)-1,(u64)gdt};install_gdt(&gp);
+    wrmsr(0xc0000101,(u64)cpu);wrmsr(0xc0000102,0);
+    if(!index)for(int i=0;i<=64;i++) {
         int vector=i==64?128:i;u64 addr=(u64)isr_table[i];
         idt[vector]=(Gate){addr&0xffff,8,0,i==64?0xee:0x8e,(addr>>16)&0xffff,addr>>32,0};
     }
@@ -98,11 +101,12 @@ static void tables_init(void) {
     u64 cr4;__asm__ volatile("mov %%cr4,%0":"=r"(cr4));cr4|=(1<<9)|(1<<10);__asm__ volatile("mov %0,%%cr4"::"r"(cr4));
     u64 cr0;__asm__ volatile("mov %%cr0,%0":"=r"(cr0));cr0=(cr0|1<<16|2)&~12ULL;
     __asm__ volatile("mov %0,%%cr0"::"r"(cr0):"memory");
-    __asm__ volatile("fninit; fxsave64 %0":"=m"(initial_fp));
+    if(!index)__asm__ volatile("fninit; fxsave64 %0":"=m"(initial_fp));
+#undef tss
 }
 static void create_task(u32 id,const u8 *image,u64 size,u64 text_end,u64 ro_end,u64 framebuffer) {
     memset(&tasks[id],0,sizeof(Task));
-    native_active[id]=0;task_fsbase[id]=0;memcpy(task_fp[id],initial_fp,512);
+    native_active[id]=0;task_affinity[id]=1;task_fsbase[id]=task_gsbase[id]=0;memcpy(task_fp[id],initial_fp,512);
     u64 root=0x200000+(u64)id*0x10000;task_cr3[id]=root;
     memset((void *)root,0,0x10000);
     u64 *pml4=(u64 *)root,*pdpt=(u64 *)(root+0x1000),*pd=(u64 *)(root+0x2000);
@@ -112,8 +116,10 @@ static void create_task(u32 id,const u8 *image,u64 size,u64 text_end,u64 ro_end,
        Only explicit grants below get the U/S bit at the leaf level. */
     for(int i=0;i<2048;i++)pd[i]=(u64)i*0x200000|PRESENT|WRITE|HUGE;
     if(id==0){u64 *low=(u64 *)0x207000;for(int i=0;i<512;i++)low[i]=(u64)i*4096|3;
-        for(int i=0;i<TASK_COUNT;i++)low[256+i*16]=0;}
-    pd[0]=0x207003; /* Shared supervisor mappings with a guard per kernel stack. */
+        for(int i=0;i<TASK_COUNT;i++)low[256+i*16]=0;
+        u64 *idle=(u64 *)0x208000;for(int i=0;i<512;i++)idle[i]=(0x200000ULL+(u64)i*4096)|3;
+        for(int i=0;i<CPU_MAX;i++)idle[256+i*16]=0;}
+    pd[1]=0x208003;pd[0]=0x207003; /* Shared supervisor mappings with a guard per kernel stack. */
     pd[USER_BASE/0x200000]=(root+0x6000)|7;
     u64 *pt=user_table(id);
     for(int i=0;i<512;i++) {
@@ -148,6 +154,7 @@ static void *user_buffer(u32 id,u64 address,u64 size,int write) {
     }
     return (void *)(physical(id)+address-USER_BASE);
 }
+static int application_slot_available(u32 id);
 #include "storage.h"
 static int endpoint_allowed(u32 from,u64 to) {
     return (from==DESKTOP&&(to==INPUT||to==DISPLAY)) || ((from==INPUT||from==DISPLAY||from>=APP_FIRST)&&to==DESKTOP);
@@ -182,17 +189,20 @@ static int port_allowed(u64 port,u64 width,int read) {
     return !read&&width==2&&port==0x604;
 }
 Frame *schedule(void) {
+    compatibility_enter();
     native_wake_waiters();
-    u32 old=current_task;
+    u32 old=current_task;u32 cpu=cpu_local()->index;
+    if(old<TASK_COUNT)task_cpu[old]=-1;
     for(u32 offset=1;offset<=TASK_COUNT;offset++) {
-        u32 next=(old+offset)%TASK_COUNT;
-        if(tasks[next].state==RUNNABLE) {
-            if(filesystem_owner<0&&!task_kernel_sp[next])native_signal_deliver(next);if(tasks[next].state!=RUNNABLE)continue;
-            current_task=next;task_runs[next]++;if(next!=old)context_switches++;
-            return &tasks[next].frame;
+        u32 next=(old+offset)%TASK_COUNT;spin_lock(&ipc_locks[next]);
+        if(tasks[next].state==RUNNABLE&&task_cpu[next]<0&&(task_affinity[next]&(1U<<cpu))&&(!cpu||native_active[next])) {
+            if(filesystem_owner<0&&!task_kernel_sp[next])native_signal_deliver(next);if(tasks[next].state!=RUNNABLE){spin_unlock(&ipc_locks[next]);continue;}
+            current_task=next;task_cpu[next]=cpu;task_runs[next]++;if(next!=old)context_switches++;
+            spin_unlock(&ipc_locks[next]);return &tasks[next].frame;
         }
+        spin_unlock(&ipc_locks[next]);
     }
-    panic("No runnable services\r\n");return 0;
+    current_task=TASK_COUNT;return 0;
 }
 static void filesystem_enter(void){
     while(filesystem_owner>=0&&filesystem_owner!=(int)current_task){tasks[current_task].state=WAIT_FS;kernel_suspend();}
@@ -202,10 +212,39 @@ static void filesystem_leave(void){
     filesystem_owner=-1;for(int i=0;i<TASK_COUNT;i++)if(tasks[i].state==WAIT_FS)tasks[i].state=RUNNABLE;
 }
 #include "native.h"
+Frame *final_context(Frame *frame){
+    /* A syscall may select its own task on an otherwise idle AP. Deliver
+       pending signals after releasing the filesystem mutex, before IRET. */
+    while(frame&&native_active[current_task]&&!task_kernel_sp[current_task]&&filesystem_owner<0){
+        NativeSignals *s=native_signals(current_task);
+        if(tasks[current_task].state==RUNNABLE&&(s->active||!(s->pending&~native_process[current_task].sigmask)))break;
+        compatibility_enter();if(filesystem_owner>=0)break;native_signal_deliver(current_task);
+        if(tasks[current_task].state==RUNNABLE)break;
+        frame=schedule();
+    }
+    return frame;
+}
+Frame *trap_dispatch(Frame *frame);
+#include "smp.h"
 Frame *trap_dispatch(Frame *frame) {
     if((frame->cs&3)!=3){serial("vector=");hex(frame->vector);serial(" rip=");hex(frame->rip);panic(" supervisor exception\r\n");}
     Task *t=&tasks[current_task];t->frame=*frame;
-    if(frame->vector==32) { timer_ticks++;virtio_timeout();task_preemptions[current_task]++;outb(0x20,0x20);return schedule(); }
+    /* Read-only per-task queries do not take the native domain lock. Keep the
+       read-side marker set until IRET so teardown waits for this CPU. */
+    if(native_active[current_task]&&frame->vector==128){
+        u64 n=frame->rax;
+        if(n==39||n==186||n==102||n==104||n==107||n==108){
+            t->frame.rax=n==39?native_process[current_task].tgid:n==186?current_task+100:1000;
+            cpu_fast_calls[cpu_local()->index]++;return &t->frame;
+        }
+    }
+    __atomic_store_n(&cpu_local()->in_user,0,__ATOMIC_RELEASE);
+    int service_fast=!native_active[current_task]&&frame->vector==128&&frame->rax<=SYS_TICKS;
+    if(service_fast&&__atomic_load_n(&compatibility_lock,__ATOMIC_ACQUIRE))cpu_parallel_service_calls++;
+    if(!service_fast)compatibility_enter();
+    if(t->state==DEAD)return schedule();
+    if(frame->vector==62){cpu_rendezvous[cpu_local()->index]++;if(local_apic)local_apic[0xb0/4]=0;return schedule();}
+    if(frame->vector==32) { timer_ticks++;for(u32 i=1;i<cpu_count;i++)if(cpus[i].online)cpu_ipi(cpus[i].apic_id,62);virtio_timeout();task_preemptions[current_task]++;outb(0x20,0x20);return schedule(); }
     if(frame->vector>=33&&frame->vector<48){virtio_interrupt(frame->vector-32);if(frame->vector>=40)outb(0xa0,0x20);outb(0x20,0x20);return schedule();}
     if(frame->vector>=48&&frame->vector<64){if(frame->vector!=63){virtio_interrupt(frame->vector);if(local_apic)local_apic[0xb0/4]=0;}return schedule();}
     if(frame->vector!=128) {
@@ -217,16 +256,22 @@ Frame *trap_dispatch(Frame *frame) {
         serial(" address=");hex(address);serial(" error=");hex(frame->error);serial(" rip=");hex(frame->rip);serial("\r\n");
         return schedule();
     }
-    native_reap_pending();
-    if(native_active[current_task]){filesystem_enter();Frame *next=native_dispatch(frame);filesystem_leave();return next;}
+    if(!service_fast)native_reap_pending();
+    if(native_active[current_task]){
+        /* Wait queues, clocks, affinity and thread bookkeeping do not acquire
+           the filesystem mutex. Mapping/lifetime and descriptor changes still
+           do, since a sleeping driver may retain an alias into their buffers. */
+        u64 n=frame->rax;int needs_fs=!(n==7||n==23||n==24||n==35||n==96||n==115||n==131||n==202||n==203||n==204||n==218||n==228||n==229||n==230||n==270||n==271||n==273||n==274||n==309);
+        if(needs_fs)filesystem_enter();Frame *next=native_dispatch(frame);if(needs_fs)filesystem_leave();return next;
+    }
     int fs_call=frame->rax==SYS_NATIVE_SPAWN||frame->rax==SYS_NATIVE_READ||frame->rax==SYS_NATIVE_WRITE||frame->rax==SYS_NATIVE_LIST||frame->rax==SYS_SYNC;
     if(fs_call)filesystem_enter();
     i64 result=0;int reschedule=0;
     switch(frame->rax) {
     case SYS_YIELD: reschedule=1;break;
-    case SYS_SEND: result=ipc_send(frame->rdi,frame->rsi);break;
-    case SYS_RECV: result=ipc_receive(frame->rdi,1);reschedule=t->state==WAITING;break;
-    case SYS_POLL: result=ipc_receive(frame->rdi,0);break;
+    case SYS_SEND: if(frame->rdi>=TASK_COUNT){result=ERR_CAP;break;}spin_lock(&ipc_locks[frame->rdi]);result=ipc_send(frame->rdi,frame->rsi);spin_unlock(&ipc_locks[frame->rdi]);break;
+    case SYS_RECV: spin_lock(&ipc_locks[current_task]);result=ipc_receive(frame->rdi,1);reschedule=t->state==WAITING;spin_unlock(&ipc_locks[current_task]);break;
+    case SYS_POLL: spin_lock(&ipc_locks[current_task]);result=ipc_receive(frame->rdi,0);spin_unlock(&ipc_locks[current_task]);break;
     case SYS_IN: result=port_allowed(frame->rdi,1,1)?inb(frame->rdi):ERR_CAP;break;
     case SYS_OUT:
         if(!port_allowed(frame->rdi,frame->rdx,0))result=ERR_CAP;
@@ -278,8 +323,8 @@ static void timer_init(void) {
 void kernel_main(void) {
     outb(0x3f9,0);outb(0x3fb,0x80);outb(0x3f8,1);outb(0x3f9,0);
     outb(0x3fb,3);outb(0x3fa,0xc7);outb(0x3fc,0x0b);
-    serial("AURORA: microkernel 0.2 / 64-bit\r\n");tables_init();
-    for(int i=0;i<TASK_COUNT;i++)tasks[i].state=DEAD;
+    serial("AURORA: microkernel 0.2 / 64-bit\r\n");tables_init(0);
+    for(int i=0;i<TASK_COUNT;i++){tasks[i].state=DEAD;task_cpu[i]=-1;task_affinity[i]=1;}
     native_clock_init();
     virtio_block_init();
     filesystem_init();
@@ -293,6 +338,6 @@ void kernel_main(void) {
 #ifdef AURORA_SELF_TEST
     for(int i=3;i<10;i++)create_task(i,probe_image,probe_image_size,PROBE_TEXT_END,PROBE_RO_END,fb);
 #endif
-    timer_init();serial("AURORA: private CR3, W^X, IPC, PIT preemption ready\r\n");
+    smp_init();timer_init();serial("AURORA: private CR3, W^X, IPC, PIT preemption ready\r\n");
     kernel_started=1;current_task=TASK_COUNT-1;enter_user(schedule());
 }

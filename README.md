@@ -20,8 +20,11 @@ then `./demo`. Compilation and linking happen inside Aurora. See
 GNU Bash, Make and the source-bootstrap workflow are described in
 [Development foundations](FOUNDATIONS.md), including the remaining work in
 steps 1–7. GNU Make can now rebuild and install itself inside Aurora.
-Static musl POSIX threads use shared address spaces and futex synchronization;
-see [thread, memory and IRQ validation](THREADS.md).
+Musl POSIX threads use shared address spaces and futex synchronization.
+The launcher now starts four CPUs; use `-Cpus 1` for a single-CPU boot.
+ELF interpreters, PIE applications and shared-library loading are supported.
+See [multicore and dynamic linking](SMP-DYNAMIC.md) and the earlier
+[thread, memory and IRQ validation](THREADS.md).
 
 See the updated [20-item roadmap](ROADMAP.md) for remaining work, including
 network downloads, native source builds, USB, GTK, sound, Radeon and Nouveau.

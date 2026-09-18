@@ -26,7 +26,7 @@ static int fat_find(const char *path){
     FILINFO info;memset(&info,0,sizeof(info));FRESULT error=FR_OK;
     if(!path[9]||(path[9]=='/'&&!path[10]))info.fattrib=AM_DIR;else error=f_stat(fat_name(path),&info);
     if(error)return fat_error(error);u32 index;for(index=0;index<native_count;index++)if(!NFILES[index].kind)break;
-    if(index==4096)return -28;if(index==native_count)native_count++;
+    if(index==NATIVE_FILE_CACHE)return -28;if(index==native_count)native_count++;
     NativeFile *f=&NFILES[index];memset(f,0,sizeof(*f));ns_copy(f->path,path);f->kind=(info.fattrib&AM_DIR)?2:1;f->size=info.fsize;*(u32 *)f->pad=0777;*(u32 *)(f->pad+4)=1;return index;
 }
 static int fat_create(const char *path){FIL file;FRESULT error=f_open(&file,fat_name(path),FA_WRITE|FA_CREATE_NEW);if(error)return fat_error(error);f_close(&file);return fat_find(path);}

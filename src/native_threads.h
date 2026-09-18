@@ -32,14 +32,14 @@ static i64 native_clone_thread(Frame *frame,u64 flags,u64 stack,u64 parent_tid,u
     if(((flags&0x100000)&&!ptid)||((flags&(0x1000000|0x200000))&&!ctid))return -14;
     if((flags&0x80000)&&!native_buffer(current_task,tls,1,0))return -14;
     int id=native_slot();if(id<0)return -11;u32 parent=current_task;native_wait_reset(id);
-    native_process[id]=native_process[parent];NativeProcess *p=&native_process[id];
+    native_process[id]=native_process[parent];task_affinity[id]=task_affinity[parent];NativeProcess *p=&native_process[id];
     p->thread=1;p->reaped=0;p->vfork_parent=-1;p->clear_tid=(flags&0x200000)?child_tid:0;p->robust_head=0;
     native_fd_users[p->fd_owner]++;native_group_refs[p->tgid-100]++;
     native_vm_owner[id]=native_space(parent);native_vm_refs[native_vm_owner[id]]++;native_vm_attached[id]=1;
     task_cr3[id]=task_cr3[parent];native_active[id]=1;
     memset(native_signals(id),0,sizeof(NativeSignals));
     memset(&tasks[id],0,sizeof(Task));tasks[id].frame=*frame;tasks[id].frame.rax=0;tasks[id].frame.rsp=stack;
-    task_fsbase[id]=(flags&0x80000)?tls:task_fsbase[parent];memcpy(task_fp[id],task_fp[parent],512);
+    task_fsbase[id]=(flags&0x80000)?tls:task_fsbase[parent];task_gsbase[id]=task_gsbase[parent];memcpy(task_fp[id],task_fp[parent],512);
     task_faults[id]=0;exit_codes[id]=0;
     if(ptid)*ptid=id+100;if((flags&0x1000000)&&ctid)*ctid=id+100;return id+100;
 }

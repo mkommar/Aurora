@@ -129,7 +129,7 @@ static i64 spawn_application(u64 address) {
         if((p->flags&1)&&h->entry>=p->vaddr&&h->entry-p->vaddr<p->filesz)entry_ok=1;
     }
     if(!entry_ok)return ERR_FORMAT;
-    int id;for(id=APP_FIRST;id<TASK_COUNT;id++)if(tasks[id].state==DEAD)break;
+    int id;for(id=APP_FIRST;id<TASK_COUNT;id++)if(application_slot_available(id))break;
     if(id==TASK_COUNT)return ERR_LIMIT;
     create_task(id,executable,0,USER_BASE,USER_BASE,0);
     u64 *pt=user_table(id);

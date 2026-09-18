@@ -42,12 +42,13 @@ static u8 native_reap[TASK_COUNT];
 typedef struct {u8 termios[36],input[4096];u32 size,ready,eof,foreground,root;} NativeTty;
 #define NATIVE_TTY ((NativeTty *)0x0c200000)
 typedef struct {u64 handler,flags,restorer,mask;} NativeSigaction;
-typedef struct {NativeSigaction action[65];Frame saved;u64 mask,pending;int active;u8 fp[512];} NativeSignals;
+typedef struct {NativeSigaction action[65];Frame saved;u64 mask,pending;int active;u8 fp[512];u64 alt_sp,alt_size;int on_alt;} NativeSignals;
 _Static_assert(sizeof(NativeSignals)<=4096,"signal state must fit reserved page");
 static NativeSignals *native_signals(u32 id){return (NativeSignals *)(0x0c000000ULL+id*4096);}
 static NativeSigaction *native_actions(u32 id){return native_signals(native_process[id].signal_owner)->action;}
-typedef struct {u8 bytes[256];u32 size,readers,writers;} NativePipe;
-static NativePipe native_pipes[16];
+#define NATIVE_PIPE_CAPACITY 4096
+typedef struct {u8 bytes[NATIVE_PIPE_CAPACITY];u32 size,readers,writers;} NativePipe;
+#define native_pipes ((NativePipe *)0x0c300000)
 #define exec_args ((char (*)[4096])0x0c400000)
 #define exec_env ((char (*)[4096])0x0c500000)
 static int exec_argc,exec_envc;
@@ -67,6 +68,7 @@ static u64 *native_pt(u32 id){return (u64 *)(task_cr3[id]+0x6000);}
 static u64 *native_alias_pt(u32 id){return (u64 *)(0x09000000ULL+(native_space(id)-APP_FIRST)*0x100000ULL);}
 static void native_memory_init(void){
     if(!native_ready)return;
+    memset(native_pipes,0,16*sizeof(NativePipe));
     memset(NATIVE_PAGE_BITMAP,0xff,NATIVE_PAGE_COUNT/8);memset(NATIVE_PAGE_REFS,0,NATIVE_PAGE_COUNT*2);memset(NATIVE_ALIAS_PD,0,32768);
     u32 count=*(u32 *)0x72000;if(count>64)count=0;
     for(u32 i=0;i<count;i++){
@@ -141,7 +143,7 @@ static void native_tables(u32 id){
     u64 *pml4=(u64 *)root,*pdpt=(u64 *)(root+0x1000),*pd=(u64 *)(root+0x2000);
     pml4[0]=(root+0x1000)|7;for(int i=0;i<4;i++)pdpt[i]=(root+0x2000+i*4096)|7;
     for(int i=0;i<2048;i++)pd[i]=(u64)i*0x200000|PRESENT|WRITE|HUGE;
-    pd[0]=0x207003;
+    pd[0]=0x207003;pd[1]=0x208003;
     memset(native_alias_pt(id),0,0x100000);
     for(int i=0;i<256;i++){pd[i+2]=(root+0x6000+i*4096)|7;NATIVE_ALIAS_PD[(id-APP_FIRST)*256+i]=((u64)native_alias_pt(id)+i*4096)|3;}
     native_active[id]=1;
@@ -200,7 +202,7 @@ static void native_signal_queue(u32 id,u32 signal){
 }
 static void native_signal_deliver(u32 id){
     if(!native_active[id])return;NativeSignals *s=native_signals(id);NativeProcess *p=&native_process[id];Frame *f=&tasks[id].frame;
-    if(s->active&&f->rsp>=s->saved.rsp-128)s->active=0;
+    if(s->active&&!s->on_alt&&f->rsp>=s->saved.rsp-128)s->active=0;
     if(s->active)return;
     u64 pending=s->pending&~p->sigmask;if(!pending)return;
     u32 signal=1;while(!(pending&1)){signal++;pending>>=1;}s->pending&=~(1ULL<<(signal-1));
@@ -209,7 +211,10 @@ static void native_signal_deliver(u32 id){
         if(signal==20||signal==21||signal==22){tasks[id].state=4;p->stopped_signal=signal;if(p->parent>=0)native_signals(p->parent)->pending|=1ULL<<16;return;}
         native_mark_group(id,-(i64)signal);return;}
     if(!action.restorer||!native_buffer(id,action.handler,1,0)||!native_buffer(id,action.restorer,1,0)){native_mark_group(id,-11);return;}
-    u64 base=(f->rsp-128-1536)&~15ULL,sp=base-8;
+    u64 top=f->rsp;
+    if((action.flags&0x08000000)&&s->alt_size&&!s->on_alt){top=s->alt_sp+s->alt_size;s->on_alt=1;}
+    if(top<USER_BASE+1672){native_mark_group(id,-11);return;}
+    u64 base=(top-128-1536)&~15ULL,sp=base-8;
     u8 *buffer=native_buffer(id,sp,1544,1);if(!buffer){native_mark_group(id,-11);return;}
     memset(buffer,0,1544);*(u64 *)buffer=action.restorer;*(u32 *)(buffer+8)=signal;
     u64 *context=(u64 *)(buffer+8+128+40);
@@ -220,8 +225,10 @@ static void native_signal_deliver(u32 id){
     if(action.flags&0x80000000)native_actions(id)[signal].handler=0;
     f->rsp=sp;f->rip=action.handler;f->rdi=signal;f->rsi=base;f->rdx=base+128;f->rax=0;
 }
-static int native_slot(void){for(int i=APP_FIRST;i<APP_FIRST+NATIVE_SLOTS;i++)if(tasks[i].state==DEAD&&!native_vm_refs[i]&&!native_fd_users[i]&&!native_group_refs[i]&&(!native_active[i]||native_process[i].reaped||native_process[i].parent<0))return i;return -1;}
+static int application_slot_available(u32 i){return tasks[i].state==DEAD&&task_cpu[i]<0&&!native_vm_refs[i]&&!native_fd_users[i]&&!native_group_refs[i]&&(!native_active[i]||native_process[i].reaped||native_process[i].parent<0);}
+static int native_slot(void){for(int i=APP_FIRST;i<APP_FIRST+NATIVE_SLOTS;i++)if(application_slot_available(i))return i;return -1;}
 static void native_defaults(u32 id){
+    task_affinity[id]=(1U<<cpu_count)-1;
     native_wait_reset(id);
     memset(&native_process[id],0,sizeof(NativeProcess));NativeProcess *p=&native_process[id];
     p->fd=native_fd_tables[id];memset(p->fd,0,sizeof(native_fd_tables[id]));p->fd_owner=p->signal_owner=p->fs_owner=id;p->tgid=id+100;native_fd_users[id]=native_group_refs[id]=1;
@@ -232,62 +239,45 @@ static void native_defaults(u32 id){
     NATIVE_TTY->termios[17]=3;NATIVE_TTY->termios[18]=28;NATIVE_TTY->termios[19]=127;NATIVE_TTY->termios[20]=21;NATIVE_TTY->termios[21]=4;NATIVE_TTY->termios[23]=1;NATIVE_TTY->termios[27]=26;
     for(int i=0;i<3;i++)p->fd[i]=(NativeFd){.kind=4,.index=i,.description=native_description(i?1:0)};
 }
+#include "native_elf.h"
 static i64 native_exec(u32 id,int index){
     if(native_vm_attached[id]&&native_vm_refs[native_space(id)]>1&&native_process[id].vfork_parent<0)return -16;
     if(*(u32 *)(NFILES[index].pad+4)&&!(*(u32 *)NFILES[index].pad&0100))return -13;
-    ElfHeader h;ElfSegment seg[32];
-    if(native_read(index,0,&h,sizeof(h))!=sizeof(h))return -8;
-    u64 length=NFILES[index].size;
-    if(h.ident[0]!=127||h.ident[1]!='E'||h.ident[2]!='L'||h.ident[3]!='F'||h.ident[4]!=2||h.ident[5]!=1||
-       (h.type!=2&&h.type!=3)||h.machine!=62||h.phentsize!=sizeof(ElfSegment)||!h.phnum||h.phnum>32||h.phoff>length||
-       h.phnum*sizeof(ElfSegment)>length-h.phoff)return -8;
-    if(native_read(index,h.phoff,seg,h.phnum*sizeof(ElfSegment))!=(i64)(h.phnum*sizeof(ElfSegment)))return -5;
-    if(h.type==3){if(h.entry>=0x3c00000)return -8;h.entry+=USER_BASE;
-        for(int i=0;i<h.phnum;i++)if(seg[i].type==1){if(seg[i].vaddr>=0x3c00000)return -8;seg[i].vaddr+=USER_BASE;}}
-    u64 brk=USER_BASE,phaddr=0;int entry_ok=0;
-    for(int i=0;i<h.phnum;i++){
-        ElfSegment *s=&seg[i];if(s->type==3)return -8;
-        if(s->type==2){if(h.type!=3||s->filesz>16384||s->offset>length||s->filesz>length-s->offset)return -8;
-            for(u64 off=0;off+16<=s->filesz;off+=16){u64 tag[2];if(native_read(index,s->offset+off,tag,16)!=16)return -5;if(!tag[0])break;if(tag[0]==1)return -8;}}
-        if(s->type!=1)continue;
-        if(s->vaddr<USER_BASE||s->vaddr>=0x4000000||s->memsz>0x4000000-s->vaddr||s->filesz>s->memsz||
-           s->offset>length||s->filesz>length-s->offset||((s->flags&3)==3)||(s->flags&~7U)||!(s->flags&4)||
-           ((s->vaddr^s->offset)&4095))return -8;
-        for(int j=0;j<i;j++)if(seg[j].type==1&&s->memsz&&seg[j].memsz&&
-            (s->vaddr&~4095ULL)<((seg[j].vaddr+seg[j].memsz+4095)&~4095ULL)&&
-            (seg[j].vaddr&~4095ULL)<((s->vaddr+s->memsz+4095)&~4095ULL))return -8;
-        if((s->flags&1)&&h.entry>=s->vaddr&&h.entry-s->vaddr<s->filesz)entry_ok=1;
-        if(s->offset<=h.phoff&&h.phoff-s->offset<s->filesz)phaddr=s->vaddr+h.phoff-s->offset;
-        if(s->vaddr+s->memsz>brk)brk=s->vaddr+s->memsz;
+    NativeElf main,interpreter;char interp[256];
+    i64 error=native_elf_read(index,USER_BASE,0x4000000,&main,interp);
+    if(error)return error;
+    int loader=-1;
+    if(interp[0]){
+        loader=native_find(interp);if(loader<0)return -2;
+        if(*(u32 *)(NFILES[loader].pad+4)&&!(*(u32 *)NFILES[loader].pad&0100))return -13;
+        char nested[256];error=native_elf_read(loader,0x08000000,0x0c000000,&interpreter,nested);
+        if(error)return error;if(nested[0]||interpreter.header.type!=3)return -8;
     }
-    if(!entry_ok||!phaddr)return -8;
-    u64 needed=512,available=native_free_pages;
-    for(int i=0;i<h.phnum;i++)if(seg[i].type==1&&seg[i].memsz)needed+=((seg[i].vaddr+seg[i].memsz+4095)/4096)-(seg[i].vaddr/4096);
-    if(native_vm_attached[id])for(u64 i=0;i<NATIVE_SIZE/4096;i++)if((native_alias_pt(id)[i]&1)&&NATIVE_PAGE_REFS[((native_alias_pt(id)[i]&0x000ffffffffff000ULL)-NATIVE_PAGE_FIRST)/4096]==1)available++;
+    u64 needed=512+main.pages+(loader>=0?interpreter.pages:0),available=native_free_pages;
+    if(native_vm_attached[id]&&native_vm_refs[native_space(id)]==1)for(u64 i=0;i<NATIVE_SIZE/4096;i++)if((native_alias_pt(id)[i]&1)&&NATIVE_PAGE_REFS[((native_alias_pt(id)[i]&0x000ffffffffff000ULL)-NATIVE_PAGE_FIRST)/4096]==1)available++;
     if(needed>available)return -12;
     native_tables(id);
-    for(int i=0;i<h.phnum;i++)if(seg[i].type==1&&seg[i].memsz){ElfSegment *s=&seg[i];
-        if(!native_map(id,s->vaddr,s->memsz,((s->flags&2)?WRITE:0)|((s->flags&1)?0:NX))){native_finish(id,127);return -12;}
-        if(s->filesz&&native_read(index,s->offset,(void *)(native_phys(id)+s->vaddr-USER_BASE),s->filesz)!=(i64)s->filesz){native_finish(id,127);return -5;}
-    }
+    error=native_elf_map(id,index,&main);
+    if(!error&&loader>=0)error=native_elf_map(id,loader,&interpreter);
+    if(error){native_finish(id,127);return error;}
     if(!native_map(id,NATIVE_STACK,0x200000,WRITE|NX)){native_finish(id,127);return -12;}
     u64 argv[256],env[128],sp=NATIVE_END-32;
     for(int i=exec_envc-1;i>=0;i--){u64 n=ns_length(exec_env[i])+1;sp-=n;memcpy((void *)(native_phys(id)+sp-USER_BASE),exec_env[i],n);env[i]=sp;}
     for(int i=exec_argc-1;i>=0;i--){u64 n=ns_length(exec_args[i])+1;sp-=n;memcpy((void *)(native_phys(id)+sp-USER_BASE),exec_args[i],n);argv[i]=sp;}
     sp-=16;u64 random_address=sp;memset((void *)(native_phys(id)+sp-USER_BASE),0x57,16);
-    u64 aux[]={3,phaddr,4,sizeof(ElfSegment),5,h.phnum,6,4096,7,0,9,h.entry,11,1000,12,1000,13,1000,14,1000,23,0,25,random_address,31,exec_argc?argv[0]:0,0,0};
+    u64 aux[]={3,main.phaddr,4,sizeof(ElfSegment),5,main.header.phnum,6,4096,7,loader>=0?interpreter.bias:0,9,main.entry,11,1000,12,1000,13,1000,14,1000,23,0,25,random_address,31,exec_argc?argv[0]:0,0,0};
     u64 words=1+exec_argc+1+exec_envc+1+sizeof(aux)/8;sp=(sp-words*8)&~15ULL;
     u64 *stack=(u64 *)(native_phys(id)+sp-USER_BASE);*stack++=exec_argc;
     for(int i=0;i<exec_argc;i++)*stack++=argv[i];*stack++=0;
     for(int i=0;i<exec_envc;i++)*stack++=env[i];*stack++=0;memcpy(stack,aux,sizeof(aux));
-    NativeProcess *p=&native_process[id];p->min_brk=p->brk=(brk+4095)&~4095ULL;p->map_next=NATIVE_MMAP_BASE;p->clear_tid=p->robust_head=0;
-    NativeSignals *signals=native_signals(id);memcpy(signals->action,native_actions(id),sizeof(signals->action));p->signal_owner=id;signals->active=0;
+    NativeProcess *p=&native_process[id];p->min_brk=p->brk=(main.end+4095)&~4095ULL;p->map_next=NATIVE_MMAP_BASE;p->clear_tid=p->robust_head=0;
+    NativeSignals *signals=native_signals(id);memcpy(signals->action,native_actions(id),sizeof(signals->action));p->signal_owner=id;signals->active=signals->on_alt=0;signals->alt_sp=signals->alt_size=0;
     for(int i=1;i<65;i++)if(signals->action[i].handler!=1)memset(&signals->action[i],0,sizeof(NativeSigaction));
     ns_copy(p->exe,NFILES[index].path);
     for(int i=0;i<NATIVE_FDS;i++)if(p->fd[i].flags&0x80000)native_close(id,i);
     if(p->vfork_parent>=0){tasks[p->vfork_parent].state=RUNNABLE;p->vfork_parent=-1;}
-    memset(&tasks[id],0,sizeof(Task));tasks[id].frame=(Frame){.rip=h.entry,.rsp=sp,.cs=0x23,.ss=0x1b,.flags=0x202};
-    task_fsbase[id]=0;memcpy(task_fp[id],initial_fp,512);task_faults[id]=0;exit_codes[id]=0;
+    memset(&tasks[id],0,sizeof(Task));tasks[id].frame=(Frame){.rip=loader>=0?interpreter.entry:main.entry,.rsp=sp,.cs=0x23,.ss=0x1b,.flags=0x202};
+    task_fsbase[id]=task_gsbase[id]=0;memcpy(task_fp[id],initial_fp,512);task_faults[id]=0;exit_codes[id]=0;
     serial("NATIVE EXEC: ");serial(p->exe);serial("\r\n");return 0;
 }
 static i64 native_spawn(u64 address){
@@ -398,7 +388,7 @@ static i64 native_open(const char *path,u32 flags,u32 mode){
     int description=native_description(flags);if(!description)return -23;
     p->fd[fd]=(NativeFd){.kind=ns_equal(path,"/dev/null")?5:1,.index=index,.flags=flags&0x80000U,.description=description};return fd;
 }
-static i64 native_console(const u8 *buffer,u64 size){
+static i64 native_console_locked(const u8 *buffer,u64 size){
     Task *target=&tasks[DESKTOP];u64 done=0;
     while(done<size){if(target->count==QUEUE_SIZE)return done?(i64)done:-11;
         Message m={current_task,MSG_CONSOLE,0,0,0};u64 n=size-done;if(n>23)n=23;memcpy(&m.a,buffer+done,n);
@@ -408,6 +398,7 @@ static i64 native_console(const u8 *buffer,u64 size){
         for(u64 i=0;i<n;i++){while(!(inb(0x3fd)&32)){}outb(0x3f8,buffer[done+i]);}done+=n;
     }return done;
 }
+static i64 native_console(const u8 *buffer,u64 size){spin_lock(&ipc_locks[DESKTOP]);i64 result=native_console_locked(buffer,size);spin_unlock(&ipc_locks[DESKTOP]);return result;}
 static i64 native_terminal_input(u64 id,u64 character){
     if(id>=TASK_COUNT||!native_active[id]||tasks[id].state==DEAD)return ERR_NOT_FOUND;
     NativeTty *tty=NATIVE_TTY;u8 byte=character;u32 flags=*(u32 *)(tty->termios+12);
@@ -426,6 +417,7 @@ static i64 native_terminal_input(u64 id,u64 character){
 static i64 native_io(u64 descriptor,u64 address,u64 size,int write){
     if(descriptor>=NATIVE_FDS)return -9;NativeFd *f=&native_process[current_task].fd[descriptor];if(!f->kind)return -9;
     NativeDescription *of=&native_descriptions[f->description];
+    if((write&&!(of->flags&3))||(!write&&(of->flags&3)==1))return -9;
     if(!size)return 0;void *buffer=native_buffer(current_task,address,size,!write);if(!buffer)return -14;
     if(f->kind==4){if(write)return native_console(buffer,size);NativeTty *tty=NATIVE_TTY;
         if((int)tty->foreground!=native_process[current_task].pgid){native_signal_queue(current_task,21);return -11;}
@@ -434,8 +426,8 @@ static i64 native_io(u64 descriptor,u64 address,u64 size,int write){
     if(f->kind==5)return write?(i64)size:0;
     if(f->kind==2||f->kind==3){NativePipe *p=&native_pipes[f->index];
         if(write){if(f->kind!=3)return -9;if(!p->readers){native_signal_queue(current_task,13);return -32;}
-            if(! (256-p->size)||(size<=256&&size>256-p->size))return -11;
-            if(size>256-p->size)size=256-p->size;memcpy(p->bytes+p->size,buffer,size);p->size+=size;return size;}
+            if(! (NATIVE_PIPE_CAPACITY-p->size)||(size<=NATIVE_PIPE_CAPACITY&&size>NATIVE_PIPE_CAPACITY-p->size))return -11;
+            if(size>NATIVE_PIPE_CAPACITY-p->size)size=NATIVE_PIPE_CAPACITY-p->size;memcpy(p->bytes+p->size,buffer,size);p->size+=size;return size;}
         if(f->kind!=2)return -9;if(!p->size)return p->writers?-11:0;if(size>p->size)size=p->size;memcpy(buffer,p->bytes,size);
         for(u64 i=size;i<p->size;i++)p->bytes[i-size]=p->bytes[i];p->size-=size;return size;
     }
@@ -444,6 +436,7 @@ static i64 native_io(u64 descriptor,u64 address,u64 size,int write){
     i64 result=write?native_write(f->index,of->offset,buffer,size):native_read(f->index,of->offset,buffer,size);if(result>0)of->offset+=result;return result;
 }
 static i64 native_stat(int index,u64 address,int terminal){
+    if(!terminal&&ns_equal(NFILES[index].path,"/dev/null"))terminal=1;
     u8 *out=native_buffer(current_task,address,144,1);if(!out)return -14;memset(out,0,144);
     *(u64 *)(out)=1;*(u64 *)(out+8)=index+1;*(u64 *)(out+16)=1;
     u32 mode=terminal?0666:(*(u32 *)(NFILES[index].pad+4)?*(u32 *)NFILES[index].pad:0755);
@@ -468,14 +461,14 @@ static i64 native_fork(Frame *frame,int vfork,u64 child_stack){
         if((source[i]&WRITE)&&!(source[i]&NATIVE_SHARED))source[i]=(source[i]&~WRITE)|NATIVE_COW;
         native_pt(id)[i]=source[i];native_alias_pt(id)[i]=native_alias_pt(parent)[i];
     }}
-    native_process[id]=native_process[parent];NativeProcess *p=&native_process[id];p->parent=native_process[parent].tgid-100;p->vfork_parent=vfork?(int)parent:-1;p->reaped=0;
+    native_process[id]=native_process[parent];task_affinity[id]=task_affinity[parent];NativeProcess *p=&native_process[id];p->parent=native_process[parent].tgid-100;p->vfork_parent=vfork?(int)parent:-1;p->reaped=0;
     p->fd=native_fd_tables[id];memcpy(p->fd,native_process[parent].fd,sizeof(native_fd_tables[id]));p->fd_owner=p->fs_owner=p->signal_owner=id;native_fd_users[id]=1;
     p->tgid=id+100;native_group_refs[id]=1;p->thread=0;p->clear_tid=p->robust_head=0;p->brk=native_process[native_space(parent)].brk;
     *native_signals(id)=*native_signals(parent);native_signals(id)->pending=0;
     memcpy(native_actions(id),native_actions(parent),65*sizeof(NativeSigaction));
     for(int i=0;i<NATIVE_FDS;i++){NativeFd *f=&p->fd[i];if(f->kind)native_descriptions[f->description].refs++;if(f->kind==2)native_pipes[f->index].readers++;if(f->kind==3)native_pipes[f->index].writers++;}
     memset(&tasks[id],0,sizeof(Task));tasks[id].frame=*frame;tasks[id].frame.rax=0;if(child_stack)tasks[id].frame.rsp=child_stack;
-    task_fsbase[id]=task_fsbase[parent];memcpy(task_fp[id],task_fp[parent],512);exit_codes[id]=0;
+    task_fsbase[id]=task_fsbase[parent];task_gsbase[id]=task_gsbase[parent];memcpy(task_fp[id],task_fp[parent],512);exit_codes[id]=0;
     if(vfork)tasks[parent].state=3;return id+100;
 }
 static i64 native_exec_call(u64 path_address,u64 argv_address,u64 env_address){
@@ -509,7 +502,7 @@ static Frame *native_dispatch(Frame *f){
         native_wait_reset(current_task);tasks[current_task].frame.rax=-4;return schedule();}
     switch(n){
     case 7:case 271:result=native_poll_call(n,a,b,c,d,e);break;
-    case 23:result=native_select_call(a,b,c,d,e);break;
+    case 23:case 270:result=native_select_call(n,a,b,c,d,e,g);break;
     case 35:case 230:result=native_sleep_call(n,a,b,c,d);break;
     case 0:case 1:result=native_io(a,b,c,n==1);break;
     case 2:case 257:{u64 address=n==2?a:b;u32 flags=n==2?b:c;
@@ -521,7 +514,7 @@ static Frame *native_dispatch(Frame *f){
             index=-1;for(u32 i=0;i<native_count;i++)if(NFILES[i].kind&&ns_equal(NFILES[i].path,resolved)){index=i;break;}if(index<0)index=ext2_find(resolved);
         }else index=native_find(path);result=index<0?-2:native_stat(index,target,0);break;}
     case 5:result=a>=NATIVE_FDS||!p->fd[a].kind?-9:native_stat(p->fd[a].index,b,p->fd[a].kind!=1);break;
-    case 8:if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}if(p->fd[a].kind!=1){result=-29;break;}
+    case 8:if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}if(p->fd[a].kind==5){result=c>4?-22:0;break;}if(p->fd[a].kind!=1){result=-29;break;}
         {i64 position=(i64)b;if(c==1)position+=(i64)native_descriptions[p->fd[a].description].offset;else if(c==2)position+=(i64)NFILES[p->fd[a].index].size;else if(c!=0){result=-22;break;}
         if(position<0)result=-22;else result=native_descriptions[p->fd[a].description].offset=(u64)position;}break;
     case 9:{u64 size=(b+4095)&~4095ULL;if(!b||b>NATIVE_SIZE||!size||(c&6)==6){result=-22;break;}
@@ -548,7 +541,7 @@ static Frame *native_dispatch(Frame *f){
     case 13:{if(!a||a>64||d!=8||(b&&(a==9||a==19))){result=-22;break;}NativeSigaction *in=b?native_buffer(current_task,b,32,0):0,*out=c?native_buffer(current_task,c,32,1):0;
         if((b&&!in)||(c&&!out)){result=-14;break;}NativeSigaction next;if(in)next=*in;if(out)*out=native_actions(current_task)[a];if(in)native_actions(current_task)[a]=next;result=0;break;}
     case 15:{NativeSignals *s=native_signals(current_task);if(!s->active){native_finish(current_task,-11);return schedule();}
-        tasks[current_task].frame=s->saved;p->sigmask=s->mask;memcpy(task_fp[current_task],s->fp,512);s->active=0;return schedule();}
+        tasks[current_task].frame=s->saved;p->sigmask=s->mask;memcpy(task_fp[current_task],s->fp,512);s->active=s->on_alt=0;return schedule();}
     case 14:if(d!=8){result=-22;break;}if(c){u64 *out=native_buffer(current_task,c,8,1);if(!out){result=-14;break;}*out=p->sigmask;}
         if(b){u64 *in=native_buffer(current_task,b,8,0);if(!in){result=-14;break;}if(a==0)p->sigmask|=*in;else if(a==1)p->sigmask&=~*in;else if(a==2)p->sigmask=*in;else{result=-22;break;}}p->sigmask&=~((1ULL<<8)|(1ULL<<18));result=0;break;
     case 16:{if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}if(p->fd[a].kind!=4){result=-25;break;}NativeTty *tty=NATIVE_TTY;
@@ -563,6 +556,10 @@ static Frame *native_dispatch(Frame *f){
         else if(b==0x5413){u16 *size=buffer;size[0]=17;size[1]=73;size[2]=size[3]=0;}
         else if(b==0x541b)*(u32 *)buffer=tty->ready;else if(b==0x5424)*(u32 *)buffer=0;else result=-25;break;}
     case 17:if(a>=NATIVE_FDS||p->fd[a].kind!=1){result=-9;break;}{void *out=c?native_buffer(current_task,b,c,1):0;result=c&&!out?-14:native_read(p->fd[a].index,d,out,c);}break;
+    case 18:{if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}NativeFd *fd=&p->fd[a];
+        if(fd->kind!=1){result=-29;break;}if(!(native_descriptions[fd->description].flags&3)){result=-9;break;}
+        if((i64)d<0){result=-22;break;}void *in=c?native_buffer(current_task,b,c,0):0;
+        result=c&&!in?-14:native_write(fd->index,d,in,c);break;}
     case 19:case 20:{if(c>1024){result=-22;break;}u64 *iov=native_buffer(current_task,b,c*16,0);if(!iov){result=-14;break;}result=0;
         for(u64 i=0;i<c;i++){i64 amount=native_io(a,iov[i*2],iov[i*2+1],n==20);if(amount<0){if(!result)result=amount;break;}result+=amount;if((u64)amount<iov[i*2+1])break;}break;}
     case 21:case 269:case 439:{result=native_at_path(n==21?-100:(i64)a,n==21?a:b,path);if(result)break;int index=native_find(path);if(index<0){result=-2;break;}
@@ -589,6 +586,15 @@ static Frame *native_dispatch(Frame *f){
             native_descriptions[p->fd[fd].description].refs++;
             if(n==292)p->fd[fd].flags|=(u32)c;if(p->fd[fd].kind==2)native_pipes[p->fd[fd].index].readers++;if(p->fd[fd].kind==3)native_pipes[p->fd[fd].index].writers++;}result=fd;break;}
     case 39:result=p->tgid;break;
+    case 115:if((int)a<0)result=-22;else if(!a)result=1;else {u32 *out=native_buffer(current_task,b,4,1);if(!out)result=-14;else {*out=1000;result=1;}}break;
+    case 131:{NativeSignals *s=native_signals(current_task);u64 *in=a?native_buffer(current_task,a,24,0):0,*out=b?native_buffer(current_task,b,24,1):0;
+        if((a&&!in)||(b&&!out)){result=-14;break;}u64 next[3];if(in)memcpy(next,in,24);
+        if(out){out[0]=s->alt_sp;out[1]=s->on_alt?1:s->alt_size?0:2;out[2]=s->alt_size;}
+        result=0;if(in){u32 flags=next[1];if(s->on_alt)result=-1;else if(flags&~2U)result=-22;
+            else if(flags&2){s->alt_sp=s->alt_size=0;}else if(next[2]<2048)result=-12;
+            else if(!native_buffer(current_task,next[0],next[2],1))result=-14;
+            else{s->alt_sp=next[0];s->alt_size=next[2];}}break;}
+    case 229:if(a!=0&&a!=1&&a!=4&&a!=5&&a!=6&&a!=7)result=-22;else if(!b)result=0;else{u64 *out=native_buffer(current_task,b,16,1);if(!out)result=-14;else{out[0]=0;out[1]=10000000;result=0;}}break;
     case 186:result=current_task+100;break;
     case 56:result=(a&0x10000)?native_clone_thread(f,a,b,c,d,e):((a&0x100)&&!(a&0x4000)?-38:native_fork(f,(a&0x4000)!=0,b));break;
     case 57:case 58:result=native_fork(f,n==58,0);break;
@@ -614,6 +620,7 @@ static Frame *native_dispatch(Frame *f){
         else if(b==2){p->fd[a].flags=(p->fd[a].flags&~0x80000U)|((c&1)?0x80000:0);result=0;}
         else if(b==3)result=native_descriptions[p->fd[a].description].flags;
         else if(b==4){NativeDescription *of=&native_descriptions[p->fd[a].description];of->flags=(of->flags&~0xc00U)|(c&0xc00);result=0;}
+        else if(b==1031||b==1032){if(p->fd[a].kind!=2&&p->fd[a].kind!=3)result=-22;else result=b==1031&&c>NATIVE_PIPE_CAPACITY?-1:NATIVE_PIPE_CAPACITY;}
         else if(b==0||b==1030){if(c>=NATIVE_FDS){result=-22;break;}int fd;
             for(fd=(int)c;fd<NATIVE_FDS&&p->fd[fd].kind;fd++){}if(fd==NATIVE_FDS){result=-24;break;}
             p->fd[fd]=p->fd[a];p->fd[fd].flags=b==1030?0x80000:0;native_descriptions[p->fd[fd].description].refs++;
@@ -662,13 +669,20 @@ static Frame *native_dispatch(Frame *f){
         if(n==109){if(id!=current_task&&native_process[id].parent!=(int)current_task){result=-3;break;}native_process[id].pgid=b?b:id+100;result=0;}
         else result=n==124?native_process[id].sid:native_process[id].pgid;break;}
     case 112:p->sid=p->pgid=current_task+100;result=p->sid;break;
-    case 158:if(a==0x1002&&b>=USER_BASE&&b<NATIVE_END){task_fsbase[current_task]=b;result=0;}
-        else if(a==0x1003){u64 *out=native_buffer(current_task,b,8,1);if(!out)result=-14;else{*out=task_fsbase[current_task];result=0;}}else result=-22;break;
+    case 158:if((a==0x1002||a==0x1001)&&(!b||(b>=USER_BASE&&b<NATIVE_END))){if(a==0x1002)task_fsbase[current_task]=b;else task_gsbase[current_task]=b;result=0;}
+        else if(a==0x1003||a==0x1004){u64 *out=native_buffer(current_task,b,8,1);if(!out)result=-14;else{*out=a==0x1003?task_fsbase[current_task]:task_gsbase[current_task];result=0;}}else result=-22;break;
+    case 203:case 204:{u64 id=a?a-100:current_task;
+        if(id<APP_FIRST||id>=TASK_COUNT||!native_active[id]||tasks[id].state==DEAD){result=-3;break;}
+        if(!b||b>4096||(n==204&&b<8)){result=-22;break;}u8 *mask=native_buffer(current_task,c,b,n==204);if(!mask){result=-14;break;}
+        if(n==204){memset(mask,0,b);mask[0]=(u8)task_affinity[id];result=8;}
+        else{u32 selected=mask[0]&((1U<<cpu_count)-1);if(!selected)result=-22;else{task_affinity[id]=selected;result=0;}}break;}
+    case 309:{u32 *cpu=a?native_buffer(current_task,a,4,1):0,*node=b?native_buffer(current_task,b,4,1):0;
+        if((a&&!cpu)||(b&&!node))result=-14;else{if(cpu)*cpu=cpu_local()->index;if(node)*node=0;result=0;}break;}
     case 202:result=native_futex_call(a,b,c,d,e,g);break;
     case 218:p->clear_tid=a;result=current_task+100;break;
     case 221:result=a<NATIVE_FDS&&p->fd[a].kind?0:-9;break; /* fadvise is advisory */
     case 217:result=native_getdents(a,b,c);break;
-    case 228:case 96:{u64 address=n==228?b:a;u64 *out=native_buffer(current_task,address,16,1);if(!out){result=-14;break;}out[0]=timer_ticks/100+((n==96||a==0)?native_epoch_base:0);out[1]=(timer_ticks%100)*(n==228?10000000:10000);result=0;break;}
+    case 228:case 96:{if(n==228&&a!=0&&a!=1&&a!=4&&a!=5&&a!=6&&a!=7){result=-22;break;}u64 address=n==228?b:a;u64 *out=native_buffer(current_task,address,16,1);if(!out){result=-14;break;}out[0]=timer_ticks/100+((n==96||a==0||a==5)?native_epoch_base:0);out[1]=(timer_ticks%100)*(n==228?10000000:10000);result=0;break;}
     case 280:{int index;if(d&~256ULL){result=-22;break;}
         if(!b){if(a>=NATIVE_FDS||p->fd[a].kind!=1){result=-9;break;}index=p->fd[a].index;ns_copy(path,NFILES[index].path);}
         else{result=native_at_path((i64)a,b,path);if(result)break;index=native_find(path);if(index<0){result=-2;break;}}

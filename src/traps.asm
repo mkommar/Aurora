@@ -4,22 +4,24 @@ extern trap_dispatch
 extern save_context
 extern restore_context
 extern task_kernel_sp
-extern current_task
-extern kernel_stack_top
+extern cpu_release
+extern cpu_idle_interrupt
+extern final_context
 extern schedule
 
 global syscall_entry
 syscall_entry:
-    mov [rel syscall_user_rsp], rsp
-    mov rsp, [rel kernel_stack_top]
+    swapgs
+    mov [gs:16], rsp
+    mov rsp, [gs:8]
     push qword 0x1b
-    push qword [rel syscall_user_rsp]
+    push qword [gs:16]
     push r11
     push qword 0x23
     push rcx
     push qword 0
     push qword 128
-    jmp trap_common
+    jmp trap_syscall
 global install_gdt
 install_gdt:
     lgdt [rdi]
@@ -55,7 +57,7 @@ isr%1:
 %endrep
 STUB 128
 
-trap_common:
+%macro PUSH_REGISTERS 0
     push rax
     push rbx
     push rcx
@@ -71,22 +73,39 @@ trap_common:
     push r13
     push r14
     push r15
+%endmacro
+trap_common:
+    PUSH_REGISTERS
+    test byte [rsp+144], 3
+    jz context_entry
+    swapgs
+    jmp context_entry
+trap_syscall:
+    PUSH_REGISTERS
+context_entry:
     cld
     mov rbx, rsp
     mov eax, 0x200000
     mov cr3, rax
     and rsp, -16
+    test byte [rbx+144], 3
+    jz idle_interrupt
     call save_context
     mov rdi, rbx
     call trap_dispatch
 select_context:
-    mov edx, [rel current_task]
+    mov rdi, rax
+    call final_context
+    test rax, rax
+    jz cpu_idle
+    mov edx, [gs:0]
     lea rcx, [rel task_kernel_sp]
     mov rsi, [rcx+rdx*8]
     test rsi, rsi
     jnz resume_kernel
     mov rbx, rax
     call restore_context
+    call cpu_release
     mov rsp, rbx
     jmp restore
 
@@ -105,7 +124,7 @@ kernel_suspend:
     push r13
     push r14
     push r15
-    mov edx, [rel current_task]
+    mov edx, [gs:0]
     lea rcx, [rel task_kernel_sp]
     mov [rcx+rdx*8], rsp
     sub rsp, 8
@@ -121,6 +140,22 @@ resume_kernel:
     pop rbx
     pop rbp
     ret
+global cpu_idle
+cpu_idle:
+    mov rsp, [gs:32]
+    call cpu_release
+.idle:
+    sti
+    hlt
+    cli
+    call schedule
+    test rax, rax
+    jz cpu_idle
+    jmp select_context
+idle_interrupt:
+    mov rdi, rbx
+    call cpu_idle_interrupt
+    mov rsp, rbx
 restore:
     pop r15
     pop r14
@@ -138,6 +173,10 @@ restore:
     pop rbx
     pop rax
     add rsp, 16
+    test byte [rsp+8], 3
+    jz .iret
+    swapgs
+.iret:
     iretq
 
 section .rodata
@@ -153,4 +192,3 @@ isr_table:
 section .bss
 align 8
 syscall_user_rsp: resq 1
-

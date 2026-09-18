@@ -240,7 +240,7 @@ The native development environment uses 1 GiB QEMU RAM and a GPT VirtIO disk
 the legacy application slot pool. Native virtual ranges are
 `0x400000–0x203fffff`, backed by individually allocated E820 physical pages.
 Page tables are at `0x0a000000` in 1088 KiB strides and development-volume
-metadata at `0x08400000`. Supervisor aliases above 4 GiB expose each native
+metadata at `0x0d100000` (16,384 cached filesystem entries, 8 MiB). Supervisor aliases above 4 GiB expose each native
 address space to the kernel without requiring contiguous physical allocation.
 The final 2 MiB of each native range is a stack with an unmapped guard below it.
 Native process memory and the development metadata are touched only when the

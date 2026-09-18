@@ -1,5 +1,6 @@
 /* Readiness notifications are kernel mechanisms; no driver protocol runs here.
- * Single CPU: syscall entry and IRQ handling serialize enqueue/check/wake. */
+ * The native state lock serializes enqueue/check/wake across CPUs; the
+ * filesystem mutex is not required by wait-queue operations. */
 typedef struct {int kind,interrupted,awoken,mask_changed;u64 syscall,deadline,address,count,extra[3],oldmask,key,bits;} NativeWait;
 static NativeWait native_waits[TASK_COUNT];
 volatile u64 native_wait_blocks,native_wait_wakes;
@@ -11,7 +12,7 @@ static u32 native_readiness(u32 id,int fd){
     if(fd<0||fd>=NATIVE_FDS||!native_process[id].fd[fd].kind)return 32;
     NativeFd *f=&native_process[id].fd[fd];
     if(f->kind==2){NativePipe *p=&native_pipes[f->index];return (p->size?1:0)|(!p->writers?16:0);}
-    if(f->kind==3){NativePipe *p=&native_pipes[f->index];return !p->readers?8:p->size<256?4:0;}
+    if(f->kind==3){NativePipe *p=&native_pipes[f->index];return !p->readers?8:p->size<NATIVE_PIPE_CAPACITY?4:0;}
     u32 mode=native_descriptions[f->description].flags&3;
     if(f->kind==4)return ((mode!=1&&(NATIVE_TTY->ready||NATIVE_TTY->eof))?1:0)|(mode?4:0);
     return (mode!=1?1:0)|(mode?4:0);
@@ -51,13 +52,16 @@ static i64 native_poll_call(u64 n,u64 address,u64 count,u64 timeout,u64 mask,u64
     if(result||timer_ticks>=w->deadline)return native_poll_scan(current_task,address,count,1);
     native_wait_blocks++;return -4096;
 }
-static i64 native_select_call(u64 count,u64 read,u64 write,u64 except,u64 timeout){
+static i64 native_select_call(u64 n,u64 count,u64 read,u64 write,u64 except,u64 timeout,u64 mask){
     NativeWait *w=&native_waits[current_task];
-    if(!w->kind){*w=(NativeWait){.kind=4,.syscall=23,.count=count,.extra={read,write,except}};
-        int error=native_deadline(timeout,0,0,1,&w->deadline);if(error)return error;}
+    if(!w->kind){*w=(NativeWait){.kind=4,.syscall=n,.count=count,.extra={read,write,except}};
+        int error=native_deadline(timeout,0,0,n==23,&w->deadline);if(error)return error;
+        if(n==270&&mask){u64 *arg=native_buffer(current_task,mask,16,0);if(!arg)return -14;
+            if(arg[0]){if(arg[1]!=8)return -22;u64 *value=native_buffer(current_task,arg[0],8,0);if(!value)return -14;
+                w->oldmask=native_process[current_task].sigmask;w->mask_changed=1;native_process[current_task].sigmask=*value&~((1ULL<<8)|(1ULL<<18));}}}
     int result=native_select_scan(current_task,w,0);if(result<0)return result;
     if(result||timer_ticks>=w->deadline){if(timeout){u64 *out=native_buffer(current_task,timeout,16,1);if(!out)return -14;
-            u64 left=w->deadline>timer_ticks?w->deadline-timer_ticks:0;out[0]=left/100;out[1]=(left%100)*10000;}
+            u64 left=w->deadline>timer_ticks?w->deadline-timer_ticks:0;out[0]=left/100;out[1]=(left%100)*(n==23?10000:10000000);}
         return native_select_scan(current_task,w,1);}
     native_wait_blocks++;return -4096;
 }

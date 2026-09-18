@@ -1,7 +1,7 @@
 """End-to-end GNU shell and filesystem checks in an isolated Aurora VM."""
 import argparse,importlib.util,json,shutil,subprocess,time,struct,os
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--self-host',action='store_true');parser.add_argument('--self-host-only',action='store_true');parser.add_argument('--resume',action='store_true');parser.add_argument('--tools-only',action='store_true');parser.add_argument('--backport-only',action='store_true');parser.add_argument('--intx',action='store_true');parser.add_argument('--nm');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--self-host',action='store_true');parser.add_argument('--self-host-only',action='store_true');parser.add_argument('--resume',action='store_true');parser.add_argument('--tools-only',action='store_true');parser.add_argument('--backport-only',action='store_true');parser.add_argument('--intx',action='store_true');parser.add_argument('--nm');parser.add_argument('--cpus',type=int,default=1);args=parser.parse_args()
 folder=Path('build/development-intx-tests' if args.intx else 'build/development-tests');folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img')
 if not args.resume:shutil.copyfile(args.disk,folder/'development.img')
@@ -28,7 +28,7 @@ def check(name,condition):
     assert condition,name+'\n'+log()[-6000:];checks.append(name);print('PASS:',name,flush=True)
 try:
     with (folder/'qemu-stderr.log').open('w') as stderr:
-        process=subprocess.Popen(['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel','tcg','-cpu','qemu64','-m','1G','-display','none',
+        process=subprocess.Popen(['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel','tcg','-cpu','qemu64','-smp',str(args.cpus),'-m','1G','-display','none',
             '-drive',f'format=raw,file={folder}/aurora.img,if=ide,index=0','-drive',f'format=raw,file={folder}/development.img,if=none,id=development',
             '-device','virtio-blk-pci,drive=development,disable-modern=on'+(',vectors=0' if args.intx else ''),'-serial',f'file:{folder}/serial.log','-net','none',
             '-qmp','tcp:127.0.0.1:4447,server=on,wait=off'],creationflags=subprocess.CREATE_NO_WINDOW,stderr=stderr)

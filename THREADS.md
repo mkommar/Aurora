@@ -130,11 +130,11 @@ The previous default disk and manifest are retained as
 
 ## Limits
 
-This remains a bounded single-CPU compatibility implementation, not full POSIX
-conformance. Thirteen application/thread slots share the existing task pool.
+This remains a bounded compatibility implementation, not full POSIX
+conformance. Multicore, dynamic-linker and alternate-stack additions are
+described in [SMP-DYNAMIC.md](SMP-DYNAMIC.md). Thirteen application/thread slots share the existing task pool.
 Physical user memory comes from usable E820 pages between 256 MiB and 1 GiB.
-There is no swap, SMP, priority-inheritance futex support, dynamic linker or
-file-backed MAP_SHARED coherence. Signals still have one active handler and no
-alternate stack. Broader cancellation, job-control and allocation-failure
+There is no swap, priority-inheritance futex support or file-backed MAP_SHARED
+coherence. Signals still have one active handler. Broader cancellation, job-control and allocation-failure
 coverage remain roadmap work. The device-timeout failure path needs deliberate
 fault-injection coverage; zero-timeout successful runs do not validate recovery.

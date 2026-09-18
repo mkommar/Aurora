@@ -1,7 +1,8 @@
 /* Optional development volume on ATA primary slave. Metadata lives above the
  * legacy 128 MiB configuration and is accessed only when the disk is present. */
 typedef struct {char path[256];u64 sector,size;u32 capacity,kind;u8 pad[232];} NativeFile;
-#define NFILES ((NativeFile *)0x08400000)
+#define NATIVE_FILE_CACHE 16384
+#define NFILES ((NativeFile *)0x0d100000)
 static u32 native_count,native_next;
 static int native_ready;
 static u8 native_sector[512];

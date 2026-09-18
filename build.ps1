@@ -23,8 +23,9 @@ Invoke-Checked $nasm @('-f','elf64','src/user/start.asm','-o',"$output/user-star
 Invoke-Checked "$LlvmBin/clang.exe" ($flags + @('-c','src/user/lib.c','-o',"$output/user-lib.o"))
 $services = @('desktop','input','display')
 if ($SelfTest) { $services += 'probe' }
+Invoke-Checked $nasm @('-f','bin','src/ap_start.asm','-o',"$output/ap-start.bin")
 $header = @('/* Generated from the separately linked user binaries. */')
-$bundle = @('bits 64','section .rodata.images')
+$bundle = @('bits 64','section .rodata.images','global ap_start_image,ap_start_end','ap_start_image:',"incbin `"$output/ap-start.bin`"",'ap_start_end:')
 foreach ($service in $services) {
     Invoke-Checked "$LlvmBin/clang.exe" ($flags + @('-c',"src/user/$service.c",'-o',"$output/$service.o"))
     Invoke-Checked "$LlvmBin/ld.lld.exe" @('-nostdlib','-T','src/user/linker.ld',"$output/user-start.o", "$output/$service.o", "$output/user-lib.o",'-o',"$output/$service.elf")

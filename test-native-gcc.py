@@ -5,7 +5,7 @@ import importlib.util,json,shutil,subprocess,time,struct,argparse
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
+parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');parser.add_argument('--cpus',type=int,default=1);parser.add_argument('--qmp-port',type=int,default=4446);args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
 folder=Path('build/ext2-tests' if args.disk!='build/toolchain.img' else 'build/native-tests');folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img');shutil.copyfile(args.disk,folder/'toolchain.img')
 # Add the regression source to the isolated test disk, preserving the user's disk.
@@ -33,15 +33,15 @@ def wait(predicate,seconds=120):
     raise AssertionError('Guest timeout:\n'+log()[-5000:])
 def boot():
     global process,q
-    process=subprocess.Popen(['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel','tcg','-cpu','qemu64','-m','1G',
+    process=subprocess.Popen(['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel','tcg','-cpu','qemu64','-smp',str(args.cpus),'-m','1G',
         '-vga','std','-drive',f'format=raw,file={folder}/aurora.img,if=ide,index=0',
         '-drive',f'format=raw,file={folder}/toolchain.img,'+('if=none,id=development' if args.virtio else 'if=ide,index=1'),
         *(['-device','virtio-blk-pci,drive=development,disable-modern=on'] if args.virtio else []),
         '-serial',f'file:{folder}/serial.log','-net','none','-display','none',
-        '-qmp','tcp:127.0.0.1:4446,server=on,wait=off'],creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
+        '-qmp',f'tcp:127.0.0.1:{args.qmp_port},server=on,wait=off'],creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
     deadline=time.monotonic()+45
     while True:
-        try:q=mod.QMP(4446);break
+        try:q=mod.QMP(args.qmp_port);break
         except OSError:
             if process.poll() is not None:
                 error=(folder/'qemu-stderr.log').read_text()

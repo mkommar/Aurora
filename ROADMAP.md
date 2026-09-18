@@ -16,11 +16,14 @@ now is downloading, configuring, compiling and installing source inside Aurora.
    poll/select, blocking waits, shared-VM musl pthreads, TLS, futex wait/wake/
    requeue, robust mutex cleanup and shared descriptor/filesystem state. A small
    musl fork/thread-exit fix is compiled and installed inside Aurora.
-   Remaining: dynamic linking, full signal/job-control semantics, broader
-   pthread APIs and upstream configure compatibility. See [validation](THREADS.md).
+   ELF interpreters, PIE/DSOs, dynamic TLS, alternate signal stacks and CPU
+   affinity are now supported. Remaining: full signal/job-control semantics,
+   broader pthread APIs and upstream configure coverage. See
+   [multicore/dynamic linking](SMP-DYNAMIC.md) and [earlier validation](THREADS.md).
 3. **Scale process memory further.** Implemented: 512 MiB address spaces,
    reference-counted pages, copy-on-write fork, shared anonymous mappings and
-   kernel-copy COW handling. Remaining: demand paging, scalable task/page-table
+   kernel-copy COW handling, multicore execution and acknowledged TLB
+   rendezvous. Remaining: finer native-domain locking, demand paging, scalable task/page-table
    allocation, broader allocation-failure tests and GCC rebuild measurements.
 4. **Filesystem correctness and recovery.** Unify legacy/native access, complete
    links and metadata semantics, reclaim crash orphans, support backup-GPT
