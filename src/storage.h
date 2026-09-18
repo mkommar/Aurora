@@ -1,8 +1,18 @@
-/* Initial AuroraFS/ELF implementation. ATA PIO is bounded, synchronous, and
- * targets the primary master in the supported QEMU configuration. */
+/* AuroraFS over the primary ATA channel. Before scheduling starts, PIO polls
+ * with bounded spins. Afterwards IRQ14 completes transfers: reads and flushes
+ * sleep until the drive interrupts, writes poll DRQ (no interrupt precedes the
+ * data phase) and then sleep for the completion interrupt. A sequence number
+ * tags each command so a late interrupt from an earlier command cannot
+ * complete a newer one, and a tick deadline bounds every sleep. Callers hold
+ * the filesystem mutex, which serializes the channel. */
 static FileEntry directory[FS_FILES];
-static u8 disk_sector[512], executable[FS_MAX_SIZE];
+static u8 disk_sector[512];
+#define executable ((u8 *)(KERNEL_STATE+0x60000))
 static int fs_ready;
+static int ata_irq_mode,ata_waiter=-1;
+static u32 ata_sequence,ata_completed_sequence;
+static u64 ata_deadline;
+volatile u64 ata_interrupts,ata_suspensions,ata_timeouts,ata_stale_interrupts,ata_polled;
 static int ata_wait(int data) {
     for(u32 i=0;i<1000000;i++) {
         u8 s=inb(0x1f7);
@@ -11,25 +21,48 @@ static int ata_wait(int data) {
     }
     return 0;
 }
-static int sector_io(u32 lba,void *buffer,int write) {
-    if(lba>=32768)return 0;
-    outb(0x1f6,0xe0|(lba>>24));
+static void ata_interrupt(u32 irq){
+    if(irq!=14)return;(void)inb(0x1f7);ata_interrupts++;
+    if(ata_waiter<0){ata_stale_interrupts++;return;}
+    ata_completed_sequence=ata_sequence;tasks[ata_waiter].state=RUNNABLE;ata_waiter=-1;
+}
+static void ata_timeout(void){
+    if(ata_waiter>=0&&timer_ticks>=ata_deadline){ata_timeouts++;tasks[ata_waiter].state=RUNNABLE;ata_waiter=-1;}
+}
+/* Sleep for the interrupt of command `sequence`. Returns 1 when it arrived. */
+static int ata_irq_ready(void){return kernel_started&&ata_irq_mode&&current_task<TASK_COUNT;}
+/* Arm the waiter before issuing a command: another CPU may take IRQ14 before
+ * this one sleeps, and the handler must recognise the completion. */
+static void ata_arm(void){if(ata_irq_ready())ata_waiter=current_task;}
+static int ata_sleep(u32 sequence,u64 ticks){
+    if(!ata_irq_ready()){ata_polled++;return -1;}
+    if(ata_completed_sequence==sequence){ata_waiter=-1;return 1;}
+    ata_waiter=current_task;ata_deadline=timer_ticks+ticks;tasks[current_task].state=WAIT_IO;ata_suspensions++;kernel_suspend();
+    return ata_completed_sequence==sequence;
+}
+static int ata_transfer(u32 lba,void *buffer,int write,int slave) {
+    if(lba>=0x10000000)return 0;
+    outb(0x1f6,(slave?0xf0:0xe0)|(lba>>24));
     for(int i=0;i<4;i++)(void)inb(0x3f6);
     if(!ata_wait(0))return 0;
+    u32 sequence=++ata_sequence;ata_arm();
     outb(0x1f2,1);outb(0x1f3,lba);outb(0x1f4,lba>>8);outb(0x1f5,lba>>16);
     outb(0x1f7,write?0x30:0x20);
+    if(!write){int slept=ata_sleep(sequence,300);if(!slept)return 0;}
     if(!ata_wait(1))return 0;
-    u16 *words=buffer;
-    for(int i=0;i<256;i++) {
-        if(write)outw(0x1f0,words[i]);
-        else {u16 v;__asm__ volatile("inw %1,%0":"=a"(v):"Nd"((u16)0x1f0));words[i]=v;}
-    }
+    u64 count=256;
+    if(write)__asm__ volatile("rep outsw":"+S"(buffer),"+c"(count):"d"((u16)0x1f0):"memory");
+    else __asm__ volatile("rep insw":"+D"(buffer),"+c"(count):"d"((u16)0x1f0):"memory");
+    if(write){int slept=ata_sleep(sequence,300);if(!slept)return 0;}
     for(int i=0;i<4;i++)(void)inb(0x3f6);
     return ata_wait(0);
 }
+static int sector_io(u32 lba,void *buffer,int write) {if(lba>=32768)return 0;return ata_transfer(lba,buffer,write,0);}
 static int disk_flush(void) {
-    outb(0x1f7,0xe7);
+    u32 sequence=++ata_sequence;ata_arm();outb(0x1f7,0xe7);
     /* Host-backed large images can take longer to flush than a sector I/O. */
+    int slept=ata_sleep(sequence,3000);if(!slept)return 0;
+    if(slept>0){u8 s=inb(0x1f7);return s&&s!=255&&!(s&0xa1);}
     for(u32 i=0;i<100000000;i++){u8 s=inb(0x1f7);if(!s||s==255)return 0;if(!(s&128))return !(s&0x21);}
     return 0;
 }
@@ -104,7 +137,7 @@ static i64 spawn_application(u64 address) {
     if(!name_valid(request.name)||request.args[127])return ERR_NAME;
     if(!fs_ready)return ERR_IO;
     int index=file_find(request.name);if(index<0)return ERR_NOT_FOUND;
-    i64 size=file_read(index,executable,sizeof(executable));if(size<0)return size;
+    i64 size=file_read(index,executable,FS_MAX_SIZE);if(size<0)return size;
     if(size<(i64)sizeof(ElfHeader))return ERR_FORMAT;
     ElfHeader *h=(ElfHeader *)executable;
     if(h->ident[0]!=127||h->ident[1]!='E'||h->ident[2]!='L'||h->ident[3]!='F'||
@@ -129,8 +162,9 @@ static i64 spawn_application(u64 address) {
         if((p->flags&1)&&h->entry>=p->vaddr&&h->entry-p->vaddr<p->filesz)entry_ok=1;
     }
     if(!entry_ok)return ERR_FORMAT;
-    int id;for(id=APP_FIRST;id<TASK_COUNT;id++)if(application_slot_available(id))break;
-    if(id==TASK_COUNT)return ERR_LIMIT;
+    /* Legacy applications keep their fixed page-table and RAM reservations. */
+    int id;for(id=APP_FIRST;id<LEGACY_TASKS;id++)if(application_slot_available(id))break;
+    if(id==LEGACY_TASKS)return ERR_LIMIT;
     create_task(id,executable,0,USER_BASE,USER_BASE,0);
     u64 *pt=user_table(id);
     for(int i=0;i<496;i++)pt[i]=0;

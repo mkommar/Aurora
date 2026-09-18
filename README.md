@@ -27,6 +27,11 @@ After installing the shared runtime, `gcc demo.c -o demo` builds dynamically;
 `-static` keeps the existing self-contained executable path.
 See [multicore and dynamic linking](SMP-DYNAMIC.md) and the earlier
 [thread, memory and IRQ validation](THREADS.md).
+The base platform now has demand-paged anonymous memory, 32 task slots,
+nested signal delivery with `siginfo`, interval timers, batched VirtIO and
+interrupt-driven ATA storage, and the build-critical syscalls that GNU
+configure scripts and build tools expect; see [PLATFORM.md](PLATFORM.md) and
+`python test-platform.py`.
 
 See the updated [20-item roadmap](ROADMAP.md) for remaining work, including
 network downloads, native source builds, USB, GTK, sound, Radeon and Nouveau.

@@ -10,7 +10,7 @@ static i64 native_elf_read(int file,u64 base,u64 limit,NativeElf *image,char *in
     if(native_read(file,h->phoff,image->segments,h->phnum*sizeof(ElfSegment))!=(i64)(h->phnum*sizeof(ElfSegment)))return -5;
     image->bias=h->type==3?base:0;
     if(h->entry>=limit-image->bias)return -8;
-    image->entry=h->entry+image->bias;int executable=0;
+    image->entry=h->entry+image->bias;int entry_mapped=0;
     for(int i=0;i<h->phnum;i++){
         ElfSegment *s=&image->segments[i];
         if(s->type==3){
@@ -26,12 +26,12 @@ static i64 native_elf_read(int file,u64 base,u64 limit,NativeElf *image,char *in
         for(int j=0;j<i;j++){ElfSegment *p=&image->segments[j];
             if(p->type==1&&s->memsz&&p->memsz&&(s->vaddr&~4095ULL)<((p->vaddr+p->memsz+4095)&~4095ULL)&&
                (p->vaddr&~4095ULL)<((s->vaddr+s->memsz+4095)&~4095ULL))return -8;}
-        if((s->flags&1)&&image->entry>=s->vaddr&&image->entry-s->vaddr<s->filesz)executable=1;
+        if((s->flags&1)&&image->entry>=s->vaddr&&image->entry-s->vaddr<s->filesz)entry_mapped=1;
         if(h->phoff>=s->offset&&h->phoff-s->offset<=s->filesz&&h->phnum*sizeof(ElfSegment)<=s->filesz-(h->phoff-s->offset))image->phaddr=s->vaddr+h->phoff-s->offset;
         if(s->vaddr+s->memsz>image->end)image->end=s->vaddr+s->memsz;
         if(s->memsz)image->pages+=(s->vaddr+s->memsz+4095)/4096-s->vaddr/4096;
     }
-    return executable&&image->phaddr?0:-8;
+    return entry_mapped&&image->phaddr?0:-8;
 }
 static i64 native_elf_map(u32 id,int file,NativeElf *image){
     for(int i=0;i<image->header.phnum;i++){ElfSegment *s=&image->segments[i];if(s->type!=1||!s->memsz)continue;

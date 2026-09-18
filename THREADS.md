@@ -132,9 +132,12 @@ The previous default disk and manifest are retained as
 
 This remains a bounded compatibility implementation, not full POSIX
 conformance. Multicore, dynamic-linker and alternate-stack additions are
-described in [SMP-DYNAMIC.md](SMP-DYNAMIC.md). Thirteen application/thread slots share the existing task pool.
-Physical user memory comes from usable E820 pages between 256 MiB and 1 GiB.
+described in [SMP-DYNAMIC.md](SMP-DYNAMIC.md). Twenty-nine application/thread
+slots are available: thirteen shared with legacy applications and sixteen
+native-only (see [PLATFORM.md](PLATFORM.md)). Physical user memory comes from
+usable E820 pages between 256 MiB and 1 GiB and is committed on first touch.
 There is no swap, priority-inheritance futex support or file-backed MAP_SHARED
-coherence. Signals still have one active handler. Broader cancellation, job-control and allocation-failure
-coverage remain roadmap work. The device-timeout failure path needs deliberate
-fault-injection coverage; zero-timeout successful runs do not validate recovery.
+coherence. Signals now nest and carry `siginfo`; broader cancellation and PTY
+job-control coverage remain roadmap work. The device-timeout failure path needs
+deliberate fault-injection coverage; zero-timeout successful runs do not
+validate recovery.

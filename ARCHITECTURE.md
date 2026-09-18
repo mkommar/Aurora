@@ -77,7 +77,9 @@ resulting framebuffer mapping and passes a small bootstrap descriptor.
 | `0x70000` | Firmware font source, copied into desktop bootstrap data |
 | Below `0x90000` | Early boot stack |
 | `0x100000–0x1fffff` | Sixteen 64 KiB kernel stacks, each with a 4 KiB unmapped guard |
-| `0x200000 + PID * 0x10000` | Private page-table structures for each process |
+| Virtual `0x3f000000–0x3f0fffff` (RAM `0x4100000`) | Sixteen more guarded kernel stacks for task slots 16–31, mapped in every root |
+| `0x200000 + PID * 0x10000` | Private page-table structures for the sixteen legacy slots |
+| `0x4000000–0x407ffff` | Kernel task table, FPU state, native process/descriptor tables and the executable staging buffer, outside the kernel image and mapped only by the kernel root |
 | Virtual `0x400000–0x5fffff` | Per-process private code, data, boot info, stack |
 | Virtual `0x5d0000–0x5d1fff` | Read-only bootstrap descriptor and font |
 | Virtual `0x5ef000–0x5effff` | Unmapped stack guard |
@@ -96,17 +98,23 @@ Framebuffer grants use 2 MiB page granularity, so they cover aligned MMIO pages.
 Kernel mappings themselves are not hardened with separate RX/RW sections. The
 OS retains fixed reservations for kernel/service structures. The BIOS loader
 records E820 memory ranges; native processes allocate and reclaim usable
-physical pages from 256 MiB through 1 GiB. There is no disk-backed demand paging.
+physical pages from 256 MiB through 1 GiB. Private anonymous memory (`mmap`,
+`brk` and the process stack) is committed on first touch: a software page-table
+bit marks the page as owed, the fault handler supplies a zeroed page, and a
+request larger than free RAM is refused up front (heuristic overcommit). There
+is no disk-backed paging.
 The original SDK ABI has no allocation syscalls; native processes have bounded
-`brk`/`mmap` backed by that physical allocator.
+`brk`/`mmap`/`mremap` backed by that physical allocator.
 The supplied QEMU launch configuration is required.
 
 ## Scheduling and fault handling
 
 PIT IRQ0 runs at approximately 100 Hz. A timer interrupt saves all general
 registers, updates counters, and chooses the next runnable task in round-robin
-order. It switches CR3 and restores that task with `iretq`. A process that does
-not yield still loses the CPU at the next timer tick.
+order. Kernel code runs under the kernel root; the return path copies the chosen
+task's saved frame onto that task's kernel stack, switches CR3 and restores it
+with `iretq`. A process that does not yield still loses the CPU at the next
+timer tick.
 
 Syscalls execute with interrupts disabled and return to the caller unless it
 yields, blocks, or exits. Each task has a guarded kernel stack. Explicit
@@ -213,9 +221,12 @@ The primary ATA master is the 16 MiB boot image. LBA 512 contains the versioned
 cannot fragment. Metadata is validated at mount; an invalid/unavailable volume
 causes filesystem calls to fail instead of auto-formatting it.
 
-Disk operations use bounded synchronous PIO polling with interrupts disabled.
-Writes flush file data before updating/flushing metadata. They are not journaled
-or atomic across power loss, and can temporarily delay input and scheduling.
+Before scheduling starts, disk operations use bounded PIO polling. Afterwards
+the primary channel is interrupt-driven: IRQ14 completes reads, writes and
+flushes while the caller sleeps under the filesystem mutex, a sequence number
+tags each command so a late interrupt cannot complete a newer one, and a tick
+deadline bounds every wait. Writes flush file data before updating/flushing
+metadata. They are not journaled or atomic across power loss.
 There are no directories, deletion, rename, per-file permissions or descriptors.
 All processes have shared filesystem access through validated whole-file APIs.
 The application runtime supplies a fixed 128 KiB allocator, not kernel demand
@@ -238,12 +249,16 @@ are user-space apps, but are not mutually isolated from one another.
 ## Verification
 
 The native development environment uses 1 GiB QEMU RAM and a GPT VirtIO disk
-(or the original ATA toolchain disk). Its 13 normal application slots share
-the legacy application slot pool. Native virtual ranges are
-`0x400000–0x203fffff`, backed by individually allocated E820 physical pages.
-Page tables are at `0x0a000000` in 1088 KiB strides and development-volume
-metadata at `0x0d100000` (16,384 cached filesystem entries, 8 MiB). Supervisor aliases above 4 GiB expose each native
+(or the original ATA toolchain disk). The kernel has 32 task slots: the three
+services, 13 legacy application slots and 16 further slots that only native
+processes use. Native virtual ranges are `0x400000–0x203fffff`, backed by
+individually allocated E820 physical pages. Native page-table roots are at
+`0x06400000` in 1088 KiB strides, alias page tables at `0x04400000` in 1 MiB
+strides, and development-volume metadata at `0x0d100000` (16,384 cached
+filesystem entries, 8 MiB). Supervisor aliases above 4 GiB expose each native
 address space to the kernel without requiring contiguous physical allocation.
+VirtIO block requests use a 16 KiB ring and eight 64 KiB bounce slots at
+`0x0d000000`; one submission carries up to eight in-flight chains.
 Exec staging uses a 1 MiB string pool at `0x0c400000`, environment storage at
 `0x0c500000`, and argument-pointer tables at `0x0c600000` and `0x0c610000`.
 The native state lock protects these shared staging buffers. Up to 4,096

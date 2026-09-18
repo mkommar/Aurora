@@ -74,10 +74,10 @@ Additional ABI support includes alternate signal stacks (`SA_ONSTACK`), group
 queries, positioned writes, clock resolution/clock-ID validation, `pselect6`,
 4 KiB atomic pipes with capacity queries, up to 4,096 exec arguments in a
 bounded 1 MiB string pool (plus the existing bounded environment), null-device
-seeking, GS-base controls and CPU affinity. Signal handling still permits one
-active handler; file-backed shared mapping coherence, PI futexes and full POSIX
-conformance remain unsupported. Interpreter/library addresses are fixed, not
-ASLR-randomized.
+seeking, GS-base controls and CPU affinity. Signal handlers now nest (see
+[PLATFORM.md](PLATFORM.md)); file-backed shared mapping coherence, PI futexes
+and full POSIX conformance remain unsupported. Interpreter/library addresses
+are fixed, not ASLR-randomized.
 
 ## Reproduce
 

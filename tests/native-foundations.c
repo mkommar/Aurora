@@ -85,8 +85,10 @@ int main(int argc,char **argv) {
     char *guard=mmap(0,4096,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     char *other=mmap(0,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     CHECK(guard!=MAP_FAILED && other!=MAP_FAILED && guard!=other);
-    unsigned char resident=0;CHECK(mincore(guard,4096,&resident)==0 && (resident&1));
+    /* Anonymous pages are committed on first touch: mapped but not yet resident. */
+    unsigned char resident=0;CHECK(mincore(guard,4096,&resident)==0 && !(resident&1));
     CHECK(mprotect(guard,4096,PROT_READ|PROT_WRITE)==0);guard[0]=42;
+    CHECK(mincore(guard,4096,&resident)==0 && (resident&1));
     CHECK(mmap(guard,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED,-1,0)==guard && guard[0]==0);
     CHECK(munmap(guard,4096)==0);CHECK(mincore(guard,4096,&resident)==-1 && errno==ENOMEM);
     CHECK(munmap(other,4096)==0);

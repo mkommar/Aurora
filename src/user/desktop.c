@@ -12,8 +12,8 @@ static int nlen;
 static char cmd[72];static int clen;
 static char lines[17][82];static int linecount;
 static int running_pid=-1;
-static char output_lines[16][74];
-static int output_lengths[16];
+static char output_lines[TASK_LIMIT][74];
+static int output_lengths[TASK_LIMIT];
 static u32 accent=0x55e0c2;
 static void rect(int x,int y,int w,int h,u32 c){int x2=x+w,y2=y+h;if(x<0)x=0;if(y<0)y=0;if(x2>W)x2=W;if(y2>H)y2=H;for(int j=y;j<y2;j++)for(int i=x;i<x2;i++)back[j*W+i]=c;}
 static void glyph(int x,int y,char ch,u32 c,int scale){const u8*f=BOOT->font+(u8)ch*16;for(int j=0;j<16;j++)for(int i=0;i<8;i++)if(f[j]&(128>>i))rect(x+i*scale,y+j*scale,scale,scale,c);}
@@ -130,7 +130,7 @@ static void draw(void){for(int y=0;y<H;y++){u32 c=theme?((24+y/50)<<16|(28+y/60)
  for(;;){Message m;receive(&m);if(m.sender==DISPLAY&&m.type==MSG_PRESENTED&&m.a==frame_number)break;event(&m);}
 }
 static void event(const Message *m){
- if(m->sender>=3&&m->sender<16&&m->type==MSG_CONSOLE){const char *s=(const char *)&m->a;int n=0;while(n<24&&s[n])n++;console_text((int)m->sender,s,n);return;}
+ if(m->sender>=3&&m->sender<TASK_LIMIT&&m->type==MSG_CONSOLE){const char *s=(const char *)&m->a;int n=0;while(n<24&&s[n])n++;console_text((int)m->sender,s,n);return;}
  if(m->sender!=INPUT)return;
  if(m->type==MSG_KEY)key(m->a);
  else if(m->type==MSG_MOUSE){mouse(m->a);mouse(m->b);mouse(m->c);}

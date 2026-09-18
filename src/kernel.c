@@ -19,14 +19,31 @@ static int radeon_flr, radeon_irq_cap;
 #else
 #define APP_FIRST 3
 #endif
-#define TASK_COUNT 16
+#define TASK_COUNT TASK_LIMIT
 #define QUEUE_SIZE 32
+/* Large per-task tables live in reserved supervisor RAM below 128 MiB rather
+ * than in the kernel image's bounded .bss. They are zeroed at startup. Kernel
+ * code runs under the kernel root (CR3 0x200000), where this region is an
+ * identity huge-page mapping; task roots need not map it because the trap
+ * return path copies the outgoing frame onto the task's kernel stack before
+ * switching CR3. Kernel stacks, in contrast, are used by the trap entry under
+ * the task's own CR3, so every root maps them. */
+#define KERNEL_STATE 0x04000000ULL
+#define KERNEL_STATE_SIZE 0x80000ULL
+/* Kernel stacks for slots 16-31 share one 4 KiB-granular table with a guard.
+ * Their virtual window lies outside every user range (native user addresses
+ * end at 0x203fffff); the backing RAM sits below 128 MiB so the smallest
+ * supported machine has it. */
+#define EXTENDED_STACKS 0x3f000000ULL
+#define EXTENDED_STACKS_PHYSICAL 0x04100000ULL
+#define EXTENDED_STACK_TABLE 0x209000ULL
 enum { RUNNABLE, WAITING, DEAD, WAIT_VFORK, STOPPED, WAIT_IO, WAIT_FS, WAIT_EVENT };
 /* Exactly the stack layout in traps.asm, including the hardware IRET frame. */
 typedef struct {
     u64 r15,r14,r13,r12,r11,r10,r9,r8,rsi,rdi,rbp,rdx,rcx,rbx,rax;
     u64 vector,error,rip,cs,flags,rsp,ss;
 } Frame;
+_Static_assert(sizeof(Frame)==176,"traps.asm pushes a 176-byte frame");
 typedef struct {
     Frame frame;
     Message queue[QUEUE_SIZE];
@@ -41,15 +58,18 @@ typedef struct __attribute__((packed)) { u16 limit; u64 base; } TablePointer;
 typedef struct __attribute__((packed)) {
     u16 low,selector; u8 ist,attributes; u16 middle; u32 high,reserved;
 } Gate;
-static Task tasks[TASK_COUNT];
+#define tasks ((Task *)KERNEL_STATE)
+#define task_fp ((u8 (*)[512])(KERNEL_STATE+0x10000))
+_Static_assert(sizeof(Task)*TASK_COUNT<=0x10000,"task table exceeds its reservation");
 static i64 exit_codes[TASK_COUNT];
 static int native_active[TASK_COUNT];
 static u64 task_fsbase[TASK_COUNT],task_gsbase[TASK_COUNT];
-static u8 task_fp[TASK_COUNT][512] __attribute__((aligned(16)));
 static u8 initial_fp[512] __attribute__((aligned(16)));
+static u64 kernel_stack(u32 id){return id<LEGACY_TASKS?0x100000ULL+(id+1)*0x10000ULL:EXTENDED_STACKS+(id-LEGACY_TASKS+1)*0x10000ULL;}
 static void *native_buffer(u32 id,u64 address,u64 size,int write);
-static void native_signal_deliver(u32 id);
+static int native_signal_deliver(u32 id);
 static void native_finish(u32 id,i64 code);
+static void native_timers(void);
 static void native_wake_waiters(void);
 static void net_poll(void);
 static Gate idt[256];
@@ -76,11 +96,19 @@ static void hex(u64 n) { const char *digits="0123456789abcdef";for(int i=60;i>=0
 static void panic(const char *s) { serial("KERNEL PANIC: ");serial(s);for(;;)__asm__ volatile("cli; hlt"); }
 static void wrmsr(u32 msr,u64 value){__asm__ volatile("wrmsr"::"c"(msr),"a"((u32)value),"d"((u32)(value>>32)));}
 void save_context(void){u32 lo,hi;__asm__ volatile("rdmsr":"=a"(lo),"=d"(hi):"c"(0xc0000102));task_gsbase[current_task]=lo|((u64)hi<<32);__asm__ volatile("fxsave64 %0":"=m"(task_fp[current_task]));}
-void restore_context(void){
-    kernel_stack_top=0x100000ULL+(current_task+1)*0x10000ULL;cpu_local()->tss.rsp[0]=kernel_stack_top;
+/* Prepare the return to the current task. The task frame lives in
+ * KERNEL_STATE, which only the kernel root maps, so it is copied to the top of
+ * the task's kernel stack (mapped in every root, and exactly where the trap
+ * entry pushed it). The task's CR3 travels in the copy's error-code slot,
+ * which the return path discards. The caller may still be running on this
+ * very stack below the frame, so nothing outside the frame is written. The
+ * assembly return path releases the CPU, loads that CR3 and pops the copy. */
+u64 restore_context(void){
+    kernel_stack_top=kernel_stack(current_task);cpu_local()->tss.rsp[0]=kernel_stack_top;
     wrmsr(0xc0000100,task_fsbase[current_task]);wrmsr(0xc0000102,task_gsbase[current_task]);
     __asm__ volatile("fxrstor64 %0"::"m"(task_fp[current_task]));
-    __asm__ volatile("mov %0,%%cr3"::"r"(task_cr3[current_task]):"memory");
+    Frame *copy=(Frame *)(kernel_stack_top-sizeof(Frame));memcpy(copy,&tasks[current_task].frame,sizeof(Frame));copy->error=task_cr3[current_task];
+    return (u64)copy;
 }
 static u64 physical(u32 id) { return 0x2000000ULL+(u64)id*USER_SIZE; }
 static u64 *user_table(u32 id) { return (u64 *)(task_cr3[id]+0x6000); }
@@ -124,10 +152,13 @@ static void create_task(u32 id,const u8 *image,u64 size,u64 text_end,u64 ro_end,
        Only explicit grants below get the U/S bit at the leaf level. */
     for(int i=0;i<2048;i++)pd[i]=(u64)i*0x200000|PRESENT|WRITE|HUGE;
     if(id==0){u64 *low=(u64 *)0x207000;for(int i=0;i<512;i++)low[i]=(u64)i*4096|3;
-        for(int i=0;i<TASK_COUNT;i++)low[256+i*16]=0;
+        for(int i=0;i<LEGACY_TASKS;i++)low[256+i*16]=0;
         u64 *idle=(u64 *)0x208000;for(int i=0;i<512;i++)idle[i]=(0x200000ULL+(u64)i*4096)|3;
-        for(int i=0;i<CPU_MAX;i++)idle[256+i*16]=0;}
+        for(int i=0;i<CPU_MAX;i++)idle[256+i*16]=0;
+        u64 *extended=(u64 *)EXTENDED_STACK_TABLE;for(int i=0;i<512;i++)extended[i]=(EXTENDED_STACKS_PHYSICAL+(u64)i*4096)|3;
+        for(int i=0;i<TASK_COUNT-LEGACY_TASKS;i++)extended[i*16]=0;}
     pd[1]=0x208003;pd[0]=0x207003; /* Shared supervisor mappings with a guard per kernel stack. */
+    pd[EXTENDED_STACKS/0x200000]=EXTENDED_STACK_TABLE|3;
     pd[USER_BASE/0x200000]=(root+0x6000)|7;
     u64 *pt=user_table(id);
     for(int i=0;i<512;i++) {
@@ -204,7 +235,7 @@ static int port_allowed(u64 port,u64 width,int read) {
 Frame *schedule(void) {
     compatibility_enter();
     net_poll();
-    native_wake_waiters();
+    native_timers();native_wake_waiters();
     u32 old=current_task;u32 cpu=cpu_local()->index;
     if(old<TASK_COUNT)task_cpu[old]=-1;
     for(u32 offset=1;offset<=TASK_COUNT;offset++) {
@@ -230,8 +261,8 @@ Frame *final_context(Frame *frame){
     /* A syscall may select its own task on an otherwise idle AP. Deliver
        pending signals after releasing the filesystem mutex, before IRET. */
     while(frame&&native_active[current_task]&&!task_kernel_sp[current_task]&&filesystem_owner<0){
-        NativeSignals *s=native_signals(current_task);
-        if(tasks[current_task].state==RUNNABLE&&(s->active||!(s->pending&~native_process[current_task].sigmask)))break;
+        NativeSignals *s=native_signals(current_task);NativeProcess *p=&native_process[current_task];
+        if(tasks[current_task].state==RUNNABLE&&!p->restore_mask_valid&&!(s->pending&~p->sigmask))break;
         compatibility_enter();if(filesystem_owner>=0)break;native_signal_deliver(current_task);
         if(tasks[current_task].state==RUNNABLE)break;
         frame=schedule();
@@ -258,12 +289,13 @@ Frame *trap_dispatch(Frame *frame) {
     if(!service_fast)compatibility_enter();
     if(t->state==DEAD||t->state==STOPPED)return schedule();
     if(frame->vector==62){cpu_rendezvous[cpu_local()->index]++;if(local_apic)local_apic[0xb0/4]=0;return schedule();}
-    if(frame->vector==32) { timer_ticks++;for(u32 i=1;i<cpu_count;i++)if(cpus[i].online)cpu_ipi(cpus[i].apic_id,62);virtio_timeout();task_preemptions[current_task]++;outb(0x20,0x20);return schedule(); }
-    if(frame->vector>=33&&frame->vector<48){virtio_interrupt(frame->vector-32);net_interrupt(frame->vector-32);if(frame->vector>=40)outb(0xa0,0x20);outb(0x20,0x20);return schedule();}
+    if(frame->vector==32) { timer_ticks++;for(u32 i=1;i<cpu_count;i++)if(cpus[i].online)cpu_ipi(cpus[i].apic_id,62);virtio_timeout();ata_timeout();task_preemptions[current_task]++;outb(0x20,0x20);return schedule(); }
+    if(frame->vector>=33&&frame->vector<48){virtio_interrupt(frame->vector-32);net_interrupt(frame->vector-32);ata_interrupt(frame->vector-32);if(frame->vector>=40)outb(0xa0,0x20);outb(0x20,0x20);return schedule();}
     if(frame->vector>=48&&frame->vector<64){if(frame->vector!=63){virtio_interrupt(frame->vector);net_interrupt(frame->vector);if(local_apic)local_apic[0xb0/4]=0;}return schedule();}
     if(frame->vector!=128) {
         u64 address=0;if(frame->vector==14)__asm__ volatile("mov %%cr2,%0":"=r"(address));
-        if(frame->vector==14&&native_write_fault(current_task,address,frame->error))return &t->frame;
+        if(frame->vector==14&&(native_write_fault(current_task,address,frame->error)||native_lazy_fault(current_task,address,frame->error)))return &t->frame;
+        if(native_fault_signal(current_task,frame->vector,address))return &t->frame; /* final_context delivers the handler */
         task_faults[current_task]=frame->vector+1;task_fault_addresses[current_task]=address;t->state=DEAD;exit_codes[current_task]=-128-(i64)frame->vector;
         if(native_active[current_task])native_mark_group(current_task,exit_codes[current_task]);
         serial("FAULT isolated task=");hex(current_task);serial(" vector=");hex(frame->vector);
@@ -277,10 +309,14 @@ Frame *trap_dispatch(Frame *frame) {
            do, since a sleeping driver may retain an alias into their buffers. */
         u64 n=frame->rax;int needs_fs=!(n==7||n==23||n==24||n==35||n==96||n==115||n==131||n==202||n==203||n==204||n==218||n==228||n==229||n==230||n==270||n==271||n==273||n==274||n==309);
         if((n>=41&&n<=55)||n==318||n==284||n==290)needs_fs=0;
+        if(n==34||n==130||n==127||n==128||n==129||n==297||n==36||n==37||n==38||n==100||(n>=140&&n<=148)||n==157||n==160||n==324||n==13||n==14)needs_fs=0;
         if((n==0||n==1||n==3||n==5||n==16||n==19||n==20||n==72)&&frame->rdi<NATIVE_FDS&&native_process[current_task].fd[frame->rdi].kind>=6)needs_fs=0;
         if(needs_fs)filesystem_enter();Frame *next=native_dispatch(frame);if(needs_fs)filesystem_leave();return next;
     }
-    int fs_call=frame->rax==SYS_NATIVE_SPAWN||frame->rax==SYS_NATIVE_READ||frame->rax==SYS_NATIVE_WRITE||frame->rax==SYS_NATIVE_LIST||frame->rax==SYS_SYNC;
+    /* Legacy AuroraFS calls also sleep in interrupt-driven ATA now, so they
+       share the filesystem mutex and its kernel continuation. */
+    int fs_call=frame->rax==SYS_NATIVE_SPAWN||frame->rax==SYS_NATIVE_READ||frame->rax==SYS_NATIVE_WRITE||frame->rax==SYS_NATIVE_LIST||frame->rax==SYS_SYNC
+        ||frame->rax==SYS_FILE_READ||frame->rax==SYS_FILE_WRITE||frame->rax==SYS_SPAWN;
     if(fs_call)filesystem_enter();
     i64 result=0;int reschedule=0;
     switch(frame->rax) {
@@ -336,11 +372,14 @@ static void timer_init(void) {
     outb(0x43,0x36);outb(0x40,11932&255);outb(0x40,11932>>8);
     if(virtio_ready&&!virtio_message_mode&&virtio_irq_line>0&&virtio_irq_line<16){u16 mask=0xfffe;mask&=~(1U<<virtio_irq_line);if(virtio_irq_line>=8)mask&=~4U;outb(0x21,mask);outb(0xa1,mask>>8);}
     if(net_ready&&!net_irq_mode&&net_irq_line>0&&net_irq_line<16){u16 mask=inb(0x21)|((u16)inb(0xa1)<<8);mask&=~(1U<<net_irq_line);if(net_irq_line>=8)mask&=~4U;outb(0x21,mask);outb(0xa1,mask>>8);}
+    /* Primary ATA completion (IRQ14) drives AuroraFS and the legacy development
+       volume once tasks can sleep. The drive's nIEN bit stays clear. */
+    {u16 mask=inb(0x21)|((u16)inb(0xa1)<<8);mask&=~(1U<<14);mask&=~4U;outb(0x21,mask);outb(0xa1,mask>>8);outb(0x3f6,0);(void)inb(0x1f7);ata_irq_mode=1;}
 }
 void kernel_main(void) {
     outb(0x3f9,0);outb(0x3fb,0x80);outb(0x3f8,1);outb(0x3f9,0);
     outb(0x3fb,3);outb(0x3fa,0xc7);outb(0x3fc,0x0b);
-    serial("AURORA: microkernel 0.2 / 64-bit\r\n");tables_init(0);
+    serial("AURORA: microkernel 0.2 / 64-bit\r\n");memset((void *)KERNEL_STATE,0,KERNEL_STATE_SIZE);tables_init(0);
     for(int i=0;i<TASK_COUNT;i++){tasks[i].state=DEAD;task_cpu[i]=-1;task_affinity[i]=1;}
     native_clock_init();
     virtio_block_init();

@@ -28,13 +28,13 @@ static int ext2_resolve(char *out,const char *input,int follow_last){
 static int ext2_device_open(struct ext4_blockdev *b){(void)b;return 0;}
 static int ext2_device_read(struct ext4_blockdev *b,void *out,uint64_t sector,uint32_t count){
     (void)b;if(sector>=native_partition_sectors||count>native_partition_sectors-sector)return 5;
-    if(virtio_ready){for(u32 i=0;i<count;){u32 n=count-i;if(n>128)n=128;if(!virtio_transfer(native_partition_base+sector+i,(u8 *)out+i*512,n,0))return 5;i+=n;}return 0;}
+    if(virtio_ready){for(u32 i=0;i<count;){u32 n=count-i;if(n>virtio_slots*VIRTIO_SLOT_SECTORS)n=virtio_slots*VIRTIO_SLOT_SECTORS;if(!virtio_transfer(native_partition_base+sector+i,(u8 *)out+i*512,n,0))return 5;i+=n;}return 0;}
     for(u32 i=0;i<count;i++)if(!native_disk((u32)sector+i,(u8 *)out+i*512,0))return 5;
     return 0;
 }
 static int ext2_device_write(struct ext4_blockdev *b,const void *in,uint64_t sector,uint32_t count){
     (void)b;if(sector>=native_partition_sectors||count>native_partition_sectors-sector)return 5;
-    if(virtio_ready){for(u32 i=0;i<count;){u32 n=count-i;if(n>128)n=128;if(!virtio_transfer(native_partition_base+sector+i,(u8 *)in+i*512,n,1))return 5;i+=n;}return 0;}
+    if(virtio_ready){for(u32 i=0;i<count;){u32 n=count-i;if(n>virtio_slots*VIRTIO_SLOT_SECTORS)n=virtio_slots*VIRTIO_SLOT_SECTORS;if(!virtio_transfer(native_partition_base+sector+i,(u8 *)in+i*512,n,1))return 5;i+=n;}return 0;}
     for(u32 i=0;i<count;i++)if(!native_disk((u32)sector+i,(u8 *)in+i*512,1))return 5;
     return 0;
 }

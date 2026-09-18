@@ -12,15 +12,16 @@ static void ns_copy(char *d,const char *s){while((*d++=*s++)){} }
 #include "partitions.h"
 static int native_raw_disk(u32 sector,void *data,int write) {
     if(virtio_present)return virtio_transfer(sector,data,1,write?1:0);
-    if(sector>=0x10000000)return 0;
-    outb(0x1f6,0xf0|(sector>>24));for(int i=0;i<4;i++)(void)inb(0x3f6);
-    if(!ata_wait(0)){serial("NATIVE disk select failed sector=");hex(sector);serial(" status=");hex(inb(0x1f7));serial("\r\n");return 0;}
-    outb(0x1f2,1);outb(0x1f3,sector);outb(0x1f4,sector>>8);outb(0x1f5,sector>>16);
-    outb(0x1f7,write?0x30:0x20);if(!ata_wait(1)){serial("NATIVE disk command failed sector=");hex(sector);serial(" status=");hex(inb(0x1f7));serial("\r\n");return 0;}
-    u64 count=256;
-    if(write)__asm__ volatile("rep outsw":"+S"(data),"+c"(count):"d"((u16)0x1f0):"memory");
-    else __asm__ volatile("rep insw":"+D"(data),"+c"(count):"d"((u16)0x1f0):"memory");
-    for(int i=0;i<4;i++)(void)inb(0x3f6);int ok=ata_wait(0);if(!ok){serial("NATIVE disk transfer failed\r\n");}return ok;
+    int ok=ata_transfer(sector,data,write,1);
+    if(!ok){serial("NATIVE disk transfer failed sector=");hex(sector);serial(" status=");hex(inb(0x1f7));serial("\r\n");}return ok;
+}
+/* Multi-sector ranges become one batched VirtIO submission per 512 KiB. */
+static int native_raw_disk_range(u32 sector,void *data,u32 count,int write){
+    for(u32 done=0;done<count;){u32 n=count-done;
+        if(virtio_present){u32 limit=virtio_slots*VIRTIO_SLOT_SECTORS;if(n>limit)n=limit;if(!virtio_transfer(sector+done,(u8 *)data+(u64)done*512,n,write?1:0))return 0;}
+        else{n=1;if(!native_raw_disk(sector+done,(u8 *)data+(u64)done*512,write))return 0;}
+        done+=n;}
+    return 1;
 }
 static int native_disk(u32 sector,void *data,int write){if(sector>=native_partition_sectors)return 0;return native_raw_disk(sector+native_partition_base,data,write);}
 static int native_path(char *,const char *,const char *);

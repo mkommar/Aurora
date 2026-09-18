@@ -34,10 +34,29 @@ cp /build/mbedtls-3.6.7.tar.bz2 /build/curl-8.22.0.tar.gz /netroot/src/
 # Retain configure results for the same pinned musl ABI, but no object files.
 make clean
 find . -name Makefile -exec sed -i 's@/netroot@/usr@g' {} \;
+# libtool records the bootstrap host's absolute sed path.  Aurora exposes the
+# same utility under /usr/bin, so rewrite that host-only path before packaging
+# the clean source tree for the native in-Aurora rebuild.
+grep -RIl '/bin/sed' curl-8.22.0 | xargs -r sed -i 's@/bin/sed@/usr/bin/sed@g'
+# Keep the production libcurl archive link below Aurora's small exec argument
+# limit by replacing libtool's one-shot archive command with incremental ar.
+python3 - <<'PY'
+from pathlib import Path
+p=Path('curl-8.22.0/lib/Makefile')
+s=p.read_text()
+old='\t$(AM_V_CCLD)$(libcurl_la_LINK) -rpath $(libdir) $(libcurl_la_OBJECTS) $(libcurl_la_LIBADD) $(LIBS)'
+if old not in s:
+    raise SystemExit('libcurl archive recipe not found')
+p.write_text(s.replace(old, '\t@/work/archive-libcurl.sh', 1))
+PY
 cd /build/mbedtls-3.6.7
 make GEN_FILES= clean
 cd /build
-tar -czf /netroot/src/network-build-tree.tar.gz mbedtls-3.6.7 curl-8.22.0
+tar -czf /netroot/src/network-build-tree.tar.gz \
+    --exclude='mbedtls-3.6.7/tests' --exclude='mbedtls-3.6.7/programs' \
+    --exclude='mbedtls-3.6.7/docs' --exclude='mbedtls-3.6.7/projects' \
+    --exclude='mbedtls-3.6.7/visualc' --exclude='curl-8.22.0/tests' \
+    --exclude='curl-8.22.0/docs' mbedtls-3.6.7 curl-8.22.0
 tar -czf /build/network-bootstrap.tar.gz -C /netroot .
 base64 /build/network-bootstrap.tar.gz > /build/result.b64
 /usr/bin/curl -fsS --data-binary @/build/result.b64 http://10.0.2.2:8879/result

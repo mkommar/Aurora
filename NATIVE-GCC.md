@@ -81,14 +81,15 @@ source builds. GNU Make can compile and install itself inside Aurora.
 See [Development foundations](FOUNDATIONS.md) for the current implementation,
 commands, source versions, validation and remaining work. Native processes now
 use allocated physical pages, shared open-file descriptions, interactive TTY
-input and basic signal delivery. The normal kernel has 13 application slots,
-shared between native and SDK applications, with 512 MiB native virtual spaces and copy-on-write fork.
+input and nested signal delivery. The normal kernel has 29 application slots
+(13 shared with SDK applications, 16 native-only), with 512 MiB native virtual
+spaces, first-touch commitment of anonymous memory and copy-on-write fork.
 
 The older AURDEV01 disk remains available through `run.ps1 -NativeGcc`.
 Its flat metadata table, 1 MiB file reservations and 32 MiB growth limit apply
 only to that older format. The ext2 development disk supports directories,
-symlinks, metadata and normal file allocation. VirtIO requests suspend their caller until IRQ completion; the ATA fallback
-still polls.
+symlinks, metadata and normal file allocation. VirtIO and ATA requests both
+suspend their caller until IRQ completion; see [PLATFORM.md](PLATFORM.md).
 
 This remains a limited Linux ABI, without networking or full POSIX compatibility.
 GCC itself has not been rebuilt inside Aurora. Static and dynamic musl pthreads

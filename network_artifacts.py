@@ -21,6 +21,7 @@ def files():
     if hashlib.sha256(result['/etc/ssl/cert.pem']).hexdigest()!=lock['cacert.pem']['sha256']:raise ValueError('CA bundle hash mismatch')
     result.update({'/etc/resolv.conf':b'nameserver 10.0.2.3\noptions timeout:2 attempts:2\n',
                    '/work/rebuild-network.sh':Path('rebuild-network.sh').read_bytes(),
+                   '/work/archive-libcurl.sh':Path('archive-libcurl.sh').read_bytes(),
                    '/work/http-demo.c':Path('tests/http-demo.c').read_bytes(),
                    '/src/network-sources.lock.json':Path('network-sources.lock.json').read_bytes()})
     return result

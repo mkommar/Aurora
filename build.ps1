@@ -27,7 +27,8 @@ Invoke-Checked $nasm @('-f','bin','src/ap_start.asm','-o',"$output/ap-start.bin"
 $header = @('/* Generated from the separately linked user binaries. */')
 $bundle = @('bits 64','section .rodata.images','global ap_start_image,ap_start_end','ap_start_image:',"incbin `"$output/ap-start.bin`"",'ap_start_end:')
 foreach ($service in $services) {
-    Invoke-Checked "$LlvmBin/clang.exe" ($flags + @('-c',"src/user/$service.c",'-o',"$output/$service.o"))
+    # Services are bundled into the kernel image; size matters more than speed.
+    Invoke-Checked "$LlvmBin/clang.exe" ($flags + @('-Os','-c',"src/user/$service.c",'-o',"$output/$service.o"))
     Invoke-Checked "$LlvmBin/ld.lld.exe" @('-nostdlib','-T','src/user/linker.ld',"$output/user-start.o", "$output/$service.o", "$output/user-lib.o",'-o',"$output/$service.elf")
     Invoke-Checked "$LlvmBin/llvm-objcopy.exe" @('-O','binary',"$output/$service.elf", "$output/$service.bin")
     $symbols = & "$LlvmBin/llvm-nm.exe" -n "$output/$service.elf"

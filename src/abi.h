@@ -7,6 +7,9 @@ typedef unsigned long long u64;
 typedef long long i64;
 
 enum { DESKTOP, INPUT, DISPLAY };
+/* Task slots shared by the kernel and the desktop's per-application console
+   state. Legacy SDK applications use slots below LEGACY_TASKS. */
+enum { TASK_LIMIT=32, LEGACY_TASKS=16 };
 enum { SYS_YIELD, SYS_SEND, SYS_RECV, SYS_POLL, SYS_IN, SYS_OUT,
        SYS_LOG, SYS_TICKS, SYS_EXIT, SYS_FILE_READ, SYS_FILE_WRITE,
        SYS_FILE_LIST, SYS_SPAWN, SYS_STATUS, SYS_NATIVE_SPAWN,

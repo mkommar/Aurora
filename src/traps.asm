@@ -105,14 +105,20 @@ select_context:
     mov rsi, [rcx+rdx*8]
     test rsi, rsi
     jnz resume_kernel
-    mov rbx, rax
     call restore_context
+    ; rax: the frame copied onto the new task's kernel stack, its CR3 in the
+    ; error-code slot (offset 128) that restore discards.
+    mov rbx, rax
     ; The old task becomes claimable when cpu_release drops the state lock.
     ; Leave its kernel stack first, so another CPU cannot overwrite our return
     ; address while entering that task's next syscall.
     mov rsp, [gs:32]
     call cpu_release
+    ; Kernel state is only mapped by the kernel root; switch to the task's
+    ; root last, once everything left to pop sits on its kernel stack.
     mov rsp, rbx
+    mov rax, [rbx+128]
+    mov cr3, rax
     jmp restore
 
 global enter_user

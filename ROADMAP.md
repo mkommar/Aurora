@@ -1,7 +1,9 @@
 # Aurora: 20 remaining action items
 
-Updated 2026-09-17. This replaces the earlier list. Status for items 1–3 is recorded below; the remaining entries are planned work. Retain Aurora's original kernel, ext2 for
+Updated 2026-09-18. This replaces the earlier list. Status for items 1–3 is recorded below; the remaining entries are planned work. Retain Aurora's original kernel, ext2 for
 development, FAT32 for exchange, and the preference for reusable GNU code.
+The 2026-09-18 platform work is described in [PLATFORM.md](PLATFORM.md) and
+verified by `test-platform.py`.
 
 Already demonstrated: native GCC builds applications; GNU Make rebuilds and
 installs itself from a preconfigured source tree; Bash, GNU text pipelines and
@@ -10,21 +12,35 @@ now is downloading, configuring, compiling and installing source inside Aurora.
 
 1. **Extend interrupt-driven storage.** Implemented: VirtIO IRQ completion,
    MSI-X/MSI/INTx routing, bounded DMA buffers, sleeping callers, timeout handling
-   and guarded kernel continuations. Remaining: multiple outstanding requests,
-   IOMMU/DMA isolation, interrupt-driven ATA and moving storage into a service.
+   and guarded kernel continuations. 2026-09-18: multiple outstanding VirtIO
+   requests (eight 64 KiB slots submitted as one batch; ext2 and FAT32
+   multi-sector transfers use it), interrupt-driven ATA on IRQ14 with sequence
+   tags and tick deadlines for both the AuroraFS boot volume and the ATA
+   development path, and the legacy AuroraFS calls now sleep under the filesystem
+   mutex. Remaining: IOMMU/DMA isolation and moving storage into a service.
 2. **Complete build-critical POSIX and C-runtime support.** Implemented:
    poll/select, blocking waits, shared-VM musl pthreads, TLS, futex wait/wake/
    requeue, robust mutex cleanup and shared descriptor/filesystem state. A small
    musl fork/thread-exit fix is compiled and installed inside Aurora.
    ELF interpreters, PIE/DSOs, dynamic TLS, alternate signal stacks and CPU
-   affinity are now supported. Remaining: full signal/job-control semantics,
-   broader pthread APIs and upstream configure coverage. See
+   affinity are now supported. 2026-09-18: nested signal delivery through
+   user-stack frames with `rt_sigreturn`, fault signals carrying `si_addr`/
+   `si_code`, `sigsuspend`/`pause`/`sigpending`/`sigtimedwait`/`sigqueue`,
+   interval timers and `alarm`, `WCONTINUED`/`waitid`, `TOSTOP`, and the
+   build-critical calls `link`, `truncate`, `fallocate`, `flock`, `statfs`,
+   `msync`/`mlock`, `times`, `prctl`, `setrlimit`, priorities, `sched_*` and
+   `membarrier`. Remaining: PTYs and full job-control terminal semantics, broader
+   pthread APIs (cancellation, barriers) and upstream configure coverage. See
    [multicore/dynamic linking](SMP-DYNAMIC.md) and [earlier validation](THREADS.md).
 3. **Scale process memory further.** Implemented: 512 MiB address spaces,
    reference-counted pages, copy-on-write fork, shared anonymous mappings and
    kernel-copy COW handling, multicore execution and acknowledged TLB
-   rendezvous. Remaining: finer native-domain locking, demand paging, scalable task/page-table
-   allocation, broader allocation-failure tests and GCC rebuild measurements.
+   rendezvous. 2026-09-18: demand-zero anonymous memory (mmap, brk and the
+   process stack commit on first touch), `mremap` growth and relocation, 32 task
+   slots with kernel state moved out of the kernel image into reserved RAM, and
+   heuristic overcommit admission with fault-in failure counters. Remaining:
+   finer native-domain locking, dynamic task/page-table allocation beyond 32
+   slots, disk-backed paging and GCC rebuild measurements.
 4. **Filesystem correctness and recovery.** Unify legacy/native access, complete
    links and metadata semantics, reclaim crash orphans, support backup-GPT
    recovery and run filesystem checkers inside Aurora. Test interrupted writes.

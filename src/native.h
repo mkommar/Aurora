@@ -6,30 +6,41 @@
 #include "native_fs.h"
 #define NATIVE_SIZE 0x20000000ULL
 #define NATIVE_MMAP_BASE 0x10000000ULL
+/* Software page-table bits: COW and SHARED are hardware-ignored bits 9/10.
+ * LAZY marks a committed demand-zero page without physical backing; NONE keeps
+ * a lazy page inaccessible (PROT_NONE) until mprotect grants access. */
 #define NATIVE_COW 512ULL
 #define NATIVE_SHARED 1024ULL
+#define NATIVE_LAZY 2048ULL
+#define NATIVE_NONE (1ULL<<52)
 #define NATIVE_END (USER_BASE+NATIVE_SIZE)
 #define NATIVE_STACK (NATIVE_END-0x200000)
 #define NATIVE_SLOTS (TASK_COUNT-APP_FIRST)
 #define NATIVE_FDS 64
+#define NATIVE_DESCRIPTIONS 1024
 /* Descriptor flags are per fd; offsets and status flags belong to the shared
  * open description, including across fork and dup. Zero is never allocated. */
 typedef struct {u64 offset;u32 flags,refs;} NativeDescription;
-static NativeDescription native_descriptions[257];
+#define native_descriptions ((NativeDescription *)(KERNEL_STATE+0x50000))
 typedef struct {int kind,index;u32 description,flags;} NativeFd;
 static int native_description(u32 flags){
-    for(int i=1;i<257;i++)if(!native_descriptions[i].refs){
+    for(int i=1;i<NATIVE_DESCRIPTIONS;i++)if(!native_descriptions[i].refs){
         native_descriptions[i]=(NativeDescription){.flags=flags&~0x80000U,.refs=1};return i;
     }
     return 0;
 }
 typedef struct {
     NativeFd *fd;u64 brk,min_brk,map_next;int parent,vfork_parent,reaped;
-    char cwd[256],exe[256];u64 sigmask;u32 umask;int pgid,sid,stopped_signal;
+    char cwd[256],exe[256];u64 sigmask;u32 umask;int pgid,sid,stopped_signal,continued;
     u32 fd_owner,signal_owner,fs_owner,tgid;u64 clear_tid,robust_head;int thread;
+    u64 restore_mask;int restore_mask_valid;
+    u64 timer_deadline[3],timer_interval[3];char name[16];
 } NativeProcess;
-static NativeProcess native_process[TASK_COUNT];
-static NativeFd native_fd_tables[TASK_COUNT][NATIVE_FDS];
+#define native_process ((NativeProcess *)(KERNEL_STATE+0x30000))
+#define native_fd_tables ((NativeFd (*)[NATIVE_FDS])(KERNEL_STATE+0x20000))
+_Static_assert(sizeof(NativeProcess)*TASK_COUNT<=0x10000,"process table exceeds its reservation");
+_Static_assert(sizeof(NativeFd)*NATIVE_FDS*TASK_COUNT<=0x10000,"descriptor tables exceed their reservation");
+_Static_assert(sizeof(NativeDescription)*NATIVE_DESCRIPTIONS<=0x10000,"open descriptions exceed their reservation");
 static u16 native_fd_users[TASK_COUNT];
 static u16 native_vm_refs[TASK_COUNT];
 static u16 native_group_refs[TASK_COUNT];
@@ -43,13 +54,22 @@ static u8 native_reap[TASK_COUNT];
 typedef struct {u8 termios[36],input[4096];u32 size,ready,eof,foreground,root;} NativeTty;
 #define NATIVE_TTY ((NativeTty *)0x0c200000)
 typedef struct {u64 handler,flags,restorer,mask;} NativeSigaction;
-typedef struct {NativeSigaction action[65];Frame saved;u64 mask,pending;int active;u8 fp[512];u64 alt_sp,alt_size;int on_alt;} NativeSignals;
+/* Per-task signal state. Handler frames live on the user stack (Linux layout),
+ * so nested delivery and sigreturn need no saved kernel copy. Dispositions are
+ * shared through the signal owner; pending bits, senders and the alternate
+ * stack belong to each task. */
+typedef struct {NativeSigaction action[65];u64 pending;u32 sender[65];int code[65];u64 value[65];u64 fault_address,alt_sp,alt_size;} NativeSignals;
+volatile u64 native_signal_deliveries,native_fault_signals;
+static void native_notify_parent(u32 id,int code,int value);
+static void native_stop_group(u32 id,u32 signal);
 _Static_assert(sizeof(NativeSignals)<=4096,"signal state must fit reserved page");
 static NativeSignals *native_signals(u32 id){return (NativeSignals *)(0x0c000000ULL+id*4096);}
 static NativeSigaction *native_actions(u32 id){return native_signals(native_process[id].signal_owner)->action;}
 #define NATIVE_PIPE_CAPACITY 4096
+#define NATIVE_PIPES 64
 typedef struct {u8 bytes[NATIVE_PIPE_CAPACITY];u32 size,readers,writers;} NativePipe;
 #define native_pipes ((NativePipe *)0x0c300000)
+_Static_assert(sizeof(NativePipe)*NATIVE_PIPES<=0x100000,"pipe buffers exceed their reservation");
 #define NATIVE_EXEC_ARGS 4096
 #define NATIVE_EXEC_BYTES 0x100000
 #define exec_strings ((char *)0x0c400000)
@@ -58,15 +78,24 @@ typedef struct {u8 bytes[NATIVE_PIPE_CAPACITY];u32 size,readers,writers;} Native
 #define exec_env ((char (*)[4096])0x0c500000)
 static int exec_argc,exec_envc;
 /* Supervisor-only aliases mirror the process mappings. Physical pages come
- * from BIOS-reported RAM; no per-process contiguous reservation is needed. */
+ * from BIOS-reported RAM; no per-process contiguous reservation is needed.
+ * Per-slot page-table roots and alias tables are indexed by task slot. */
 #define NATIVE_PAGE_FIRST 0x10000000ULL
 #define NATIVE_PAGE_LIMIT 0x40000000ULL
 #define NATIVE_PAGE_COUNT ((NATIVE_PAGE_LIMIT-NATIVE_PAGE_FIRST)/4096)
 #define NATIVE_PAGE_BITMAP ((u8 *)0x08800000)
 #define NATIVE_PAGE_REFS ((u16 *)0x08810000)
 #define NATIVE_ALIAS_PD ((u64 *)0x08700000)
-static u32 native_free_pages;
+#define NATIVE_ALIAS_TABLES 0x04400000ULL
+_Static_assert(KERNEL_STATE+KERNEL_STATE_SIZE<=NATIVE_ALIAS_TABLES&&EXTENDED_STACKS_PHYSICAL+0x100000ULL<=NATIVE_ALIAS_TABLES,"kernel state overlaps the alias tables");
+#define NATIVE_ROOTS 0x06400000ULL
+#define NATIVE_ROOT_SIZE 0x110000ULL
+_Static_assert(NATIVE_ALIAS_TABLES+TASK_COUNT*0x100000ULL<=NATIVE_ROOTS,"alias tables overlap page-table roots");
+_Static_assert(NATIVE_ROOTS+TASK_COUNT*NATIVE_ROOT_SIZE<=0x08700000ULL,"page-table roots overlap the alias directory");
+_Static_assert(TASK_COUNT*NATIVE_SIZE/0x40000000ULL<=16,"alias directory needs more than 16 pages");
+static u32 native_free_pages,native_lazy_pages;
 static u32 native_page_hint;
+volatile u64 native_lazy_faults,native_lazy_commit_failures;
 static u32 native_space(u32 id){return native_vm_attached[id]?native_vm_owner[id]:id;}
 volatile u64 native_vm_shootdowns;
 static void native_vm_barrier(u32 id){
@@ -78,13 +107,20 @@ static void native_vm_barrier(u32 id){
         while(__atomic_load_n(&cpus[i].in_user,__ATOMIC_ACQUIRE)&&cpus[i].task<TASK_COUNT&&task_cr3[cpus[i].task]==root)__asm__ volatile("pause");
     native_vm_shootdowns+=sent;
 }
-static u64 native_phys(u32 id){return 0x100000000ULL+(u64)(native_space(id)-APP_FIRST)*NATIVE_SIZE;}
+static u64 native_phys(u32 id){return 0x100000000ULL+(u64)native_space(id)*NATIVE_SIZE;}
 static u64 *native_pt(u32 id){return (u64 *)(task_cr3[id]+0x6000);}
-static u64 *native_alias_pt(u32 id){return (u64 *)(0x09000000ULL+(native_space(id)-APP_FIRST)*0x100000ULL);}
+static u64 *native_alias_pt(u32 id){return (u64 *)(NATIVE_ALIAS_TABLES+(u64)native_space(id)*0x100000ULL);}
+/* A page belongs to a mapping when it is present or committed lazily. */
+static int native_mapped(u64 alias){return (alias&(PRESENT|NATIVE_LAZY))!=0;}
+/* Admission follows Linux's default heuristic overcommit: one request must fit
+ * in free RAM, but outstanding lazy commitments are not summed, so forking a
+ * process with a large untouched heap succeeds. A fault-in that finds no RAM
+ * raises SIGSEGV in the faulting process (native_lazy_commit_failures). */
+static u32 native_available_pages(void){return native_free_pages;}
 static void native_memory_init(void){
     if(!native_ready)return;
-    memset(native_pipes,0,16*sizeof(NativePipe));
-    memset(NATIVE_PAGE_BITMAP,0xff,NATIVE_PAGE_COUNT/8);memset(NATIVE_PAGE_REFS,0,NATIVE_PAGE_COUNT*2);memset(NATIVE_ALIAS_PD,0,32768);
+    memset(native_pipes,0,NATIVE_PIPES*sizeof(NativePipe));
+    memset(NATIVE_PAGE_BITMAP,0xff,NATIVE_PAGE_COUNT/8);memset(NATIVE_PAGE_REFS,0,NATIVE_PAGE_COUNT*2);memset(NATIVE_ALIAS_PD,0,65536);
     u32 count=*(u32 *)0x72000;if(count>64)count=0;
     for(u32 i=0;i<count;i++){
         u64 *entry=(u64 *)(0x72010ULL+i*24);if(*(u32 *)(entry+2)!=1)continue;
@@ -95,7 +131,7 @@ static void native_memory_init(void){
         for(u64 address=start;address<end;address+=4096){u64 page=(address-NATIVE_PAGE_FIRST)/4096;
             if(NATIVE_PAGE_BITMAP[page/8]&(1U<<(page%8))){NATIVE_PAGE_BITMAP[page/8]&=~(1U<<(page%8));native_free_pages++;}}
     }
-    for(int i=0;i<7;i++)((u64 *)0x201000)[4+i]=(0x08700000ULL+i*4096)|3;
+    for(int i=0;i<16;i++)((u64 *)0x201000)[4+i]=(0x08700000ULL+i*4096)|3;
     serial("NATIVE: BIOS page allocator free pages=");hex(native_free_pages);serial("\r\n");
 }
 static u64 native_page_allocate(void){
@@ -112,6 +148,18 @@ static void native_page_release(u64 address){
     if(address<NATIVE_PAGE_FIRST||address>=NATIVE_PAGE_LIMIT)return;
     u64 page=(address-NATIVE_PAGE_FIRST)/4096;
     if(NATIVE_PAGE_REFS[page]&&!--NATIVE_PAGE_REFS[page]){NATIVE_PAGE_BITMAP[page/8]&=~(1U<<(page%8));native_free_pages++;}
+}
+/* Give a committed lazy page its zeroed physical backing. Adding a present
+ * translation needs no remote invalidation; a racing thread finds it present. */
+static int native_fault_in(u32 id,u64 page){
+    u64 *pt=native_pt(id),*alias=native_alias_pt(id);
+    if(alias[page]&PRESENT)return 1;
+    if(!(alias[page]&NATIVE_LAZY))return 0;
+    u64 fresh=native_page_allocate();if(!fresh){native_lazy_commit_failures++;return 0;}
+    if(native_lazy_pages)native_lazy_pages--;native_lazy_faults++;
+    pt[page]=fresh|PRESENT|(pt[page]&(USER|WRITE|NX|NATIVE_SHARED));
+    alias[page]=fresh|PRESENT|WRITE|NX;
+    u64 address=native_phys(id)+page*4096;__asm__ volatile("invlpg (%0)"::"r"(address):"memory");return 1;
 }
 static int native_private_page(u32 id,u64 page){
     native_vm_barrier(id);
@@ -130,22 +178,37 @@ static int native_write_fault(u32 id,u64 address,u64 error){
     u64 page=(address-USER_BASE)/4096;if(!(native_pt(id)[page]&NATIVE_COW))return 0;
     return native_private_page(id,page);
 }
+/* Not-present user faults on committed lazy pages allocate zero-filled RAM.
+ * Access kinds the mapping does not permit fall through to fault handling. */
+static int native_lazy_fault(u32 id,u64 address,u64 error){
+    if(!native_active[id]||(error&5)!=4||address<USER_BASE||address>=NATIVE_END)return 0;
+    u64 page=(address-USER_BASE)/4096,pte=native_pt(id)[page];
+    if(!(pte&NATIVE_LAZY)||(pte&NATIVE_NONE))return 0;
+    if((error&2)&&!(pte&WRITE))return 0;
+    if((error&16)&&(pte&NX))return 0;
+    return native_fault_in(id,page);
+}
 static void native_unmap_page(u32 id,u64 page){
     native_vm_barrier(id);
-    u64 *pt=native_pt(id);if(native_alias_pt(id)[page]&1)native_page_release(native_alias_pt(id)[page]&0x000ffffffffff000ULL);pt[page]=0;
-    native_alias_pt(id)[page]=0;
-    u64 alias=native_phys(id)+page*4096;__asm__ volatile("invlpg (%0)"::"r"(alias):"memory");
+    u64 *pt=native_pt(id),*alias=native_alias_pt(id);
+    if(alias[page]&1)native_page_release(alias[page]&0x000ffffffffff000ULL);
+    else if((alias[page]&NATIVE_LAZY)&&native_lazy_pages)native_lazy_pages--;
+    pt[page]=0;alias[page]=0;
+    u64 address=native_phys(id)+page*4096;__asm__ volatile("invlpg (%0)"::"r"(address):"memory");
 }
 static void native_memory_release(u32 id){
     if(!native_vm_attached[id])return;u32 owner=native_vm_owner[id];
-    if(!--native_vm_refs[owner])for(u64 i=0;i<NATIVE_SIZE/4096;i++)if(native_alias_pt(id)[i]&1)native_unmap_page(id,i);
+    if(!--native_vm_refs[owner])for(u64 i=0;i<NATIVE_SIZE/4096;i++)if(native_mapped(native_alias_pt(id)[i]))native_unmap_page(id,i);
     native_vm_attached[id]=0;
 }
+/* Kernel access to user memory resolves lazy and copy-on-write pages first. */
 static void *native_buffer(u32 id,u64 address,u64 size,int write){
     if(!size||address<USER_BASE||address>=NATIVE_END||size>NATIVE_END-address)return 0;
     u64 *pt=native_pt(id);
     for(u64 p=(address-USER_BASE)/4096;p<=(address+size-1-USER_BASE)/4096;p++){
-        if((pt[p]&5)!=5||(write&&!(pt[p]&(WRITE|NATIVE_COW))))return 0;
+        u64 pte=pt[p];int accessible=(pte&5)==5||((pte&(NATIVE_LAZY|USER))==(NATIVE_LAZY|USER)&&!(pte&NATIVE_NONE));
+        if(!accessible||(write&&!(pte&(WRITE|NATIVE_COW))))return 0;
+        if((pte&NATIVE_LAZY)&&!native_fault_in(id,p))return 0;
         if(write&&(pt[p]&NATIVE_COW)&&!native_private_page(id,p))return 0;
     }
     return (void *)(native_phys(id)+address-USER_BASE);
@@ -156,37 +219,87 @@ static int native_string(u64 address,char *out,u64 capacity){
 static void native_tables(u32 id){
     native_memory_release(id);
     native_vm_owner[id]=id;native_vm_refs[id]=1;native_vm_attached[id]=1;
-    u64 root=0x0a000000ULL+(id-APP_FIRST)*0x110000;task_cr3[id]=root;memset((void *)root,0,0x110000);
+    u64 root=NATIVE_ROOTS+id*NATIVE_ROOT_SIZE;task_cr3[id]=root;memset((void *)root,0,NATIVE_ROOT_SIZE);
     u64 *pml4=(u64 *)root,*pdpt=(u64 *)(root+0x1000),*pd=(u64 *)(root+0x2000);
     pml4[0]=(root+0x1000)|7;for(int i=0;i<4;i++)pdpt[i]=(root+0x2000+i*4096)|7;
     for(int i=0;i<2048;i++)pd[i]=(u64)i*0x200000|PRESENT|WRITE|HUGE;
-    pd[0]=0x207003;pd[1]=0x208003;
+    pd[0]=0x207003;pd[1]=0x208003;pd[EXTENDED_STACKS/0x200000]=EXTENDED_STACK_TABLE|3;
     memset(native_alias_pt(id),0,0x100000);
-    for(int i=0;i<256;i++){pd[i+2]=(root+0x6000+i*4096)|7;NATIVE_ALIAS_PD[(id-APP_FIRST)*256+i]=((u64)native_alias_pt(id)+i*4096)|3;}
+    for(int i=0;i<256;i++){pd[i+2]=(root+0x6000+i*4096)|7;NATIVE_ALIAS_PD[id*256+i]=((u64)native_alias_pt(id)+i*4096)|3;}
     native_active[id]=1;
 }
-static int native_map(u32 id,u64 address,u64 size,u64 flags){
+/* Map a range. Present pages keep their identity after becoming private;
+ * new pages are either allocated now or committed lazily. A request larger
+ * than free RAM fails with ENOMEM up front (heuristic overcommit, see
+ * native_available_pages). Shared mappings are always backed eagerly. */
+static int native_map_pages(u32 id,u64 address,u64 size,u64 flags,int lazy){
     native_vm_barrier(id);
     if(!size||address<USER_BASE||address>=NATIVE_END||size>NATIVE_END-address)return 0;
-    u64 *pt=native_pt(id);
-    u64 needed=0;for(u64 page=(address-USER_BASE)/4096;page<=(address+size-1-USER_BASE)/4096;page++)if(!(native_alias_pt(id)[page]&1)||NATIVE_PAGE_REFS[((native_alias_pt(id)[page]&0x000ffffffffff000ULL)-NATIVE_PAGE_FIRST)/4096]>1)needed++;
-    if(needed>native_free_pages)return 0;
+    if(flags&NATIVE_SHARED)lazy=0;
+    u64 *pt=native_pt(id),*alias=native_alias_pt(id);
+    u64 needed=0;for(u64 page=(address-USER_BASE)/4096;page<=(address+size-1-USER_BASE)/4096;page++){
+        if(!(alias[page]&1)){if(!(alias[page]&NATIVE_LAZY))needed++;}
+        else if(NATIVE_PAGE_REFS[((alias[page]&0x000ffffffffff000ULL)-NATIVE_PAGE_FIRST)/4096]>1)needed++;}
+    if(needed>native_available_pages())return 0;
     for(u64 page=(address-USER_BASE)/4096;page<=(address+size-1-USER_BASE)/4096;page++){
-        if((native_alias_pt(id)[page]&1)&&!native_private_page(id,page))return 0;
-        u64 physical=(native_alias_pt(id)[page]&1)?native_alias_pt(id)[page]&0x000ffffffffff000ULL:native_page_allocate();
-        pt[page]=physical|PRESENT|USER|flags;
-        native_alias_pt(id)[page]=physical|PRESENT|WRITE|NX;
-        u64 alias=native_phys(id)+page*4096;__asm__ volatile("invlpg (%0)"::"r"(alias):"memory");
+        if(alias[page]&1){if(!native_private_page(id,page))return 0;
+            pt[page]=(alias[page]&0x000ffffffffff000ULL)|PRESENT|USER|flags;}
+        else if(lazy){if(!(alias[page]&NATIVE_LAZY))native_lazy_pages++;pt[page]=NATIVE_LAZY|USER|flags;alias[page]=NATIVE_LAZY;}
+        else{u64 physical=native_page_allocate();if(!physical)return 0;
+            if((alias[page]&NATIVE_LAZY)&&native_lazy_pages)native_lazy_pages--;
+            pt[page]=physical|PRESENT|USER|flags;alias[page]=physical|PRESENT|WRITE|NX;}
+        u64 kernel_alias=native_phys(id)+page*4096;__asm__ volatile("invlpg (%0)"::"r"(kernel_alias):"memory");
     }return 1;
 }
+static int native_map(u32 id,u64 address,u64 size,u64 flags){return native_map_pages(id,address,size,flags,0);}
 /* Search mapped pages instead of consuming the mmap arena monotonically. */
 static u64 native_mapping_gap(u32 id,u64 size){
     u64 run=0,*pt=native_alias_pt(id);
     for(u64 address=NATIVE_MMAP_BASE;address<NATIVE_STACK-4096;address+=4096){
-        if(pt[(address-USER_BASE)/4096]&1)run=0;else run+=4096;
+        if(native_mapped(pt[(address-USER_BASE)/4096]))run=0;else run+=4096;
         if(run>=size)return address+4096-size;
     }
     return 0;
+}
+static int native_range_free(u32 id,u64 address,u64 size){
+    if(address<USER_BASE||address>=NATIVE_STACK-4096||size>NATIVE_STACK-4096-address)return 0;
+    u64 *alias=native_alias_pt(id);
+    for(u64 page=(address-USER_BASE)/4096;page<(address+size-USER_BASE)/4096;page++)if(native_mapped(alias[page]))return 0;
+    return 1;
+}
+/* mremap: shrink in place, grow in place when the following range is free,
+ * otherwise relocate translations (MREMAP_MAYMOVE) without copying page data. */
+static i64 native_mremap(u32 id,u64 old_address,u64 old_size,u64 new_size,u64 flags,u64 new_address){
+    if((old_address&4095)||!old_size||!new_size||(flags&~3ULL)||((flags&2)&&!(flags&1)))return -22;
+    old_size=(old_size+4095)&~4095ULL;new_size=(new_size+4095)&~4095ULL;
+    if(old_address<USER_BASE||old_address>=NATIVE_END||old_size>NATIVE_END-old_address||new_size>NATIVE_SIZE)return -22;
+    u64 *pt=native_pt(id),*alias=native_alias_pt(id),first=(old_address-USER_BASE)/4096;
+    for(u64 page=first;page<first+old_size/4096;page++)if(!native_mapped(alias[page]))return -14;
+    u64 attributes=pt[first]&(WRITE|NX|NATIVE_SHARED|NATIVE_NONE);
+    if(new_size<=old_size){
+        for(u64 page=first+new_size/4096;page<first+old_size/4096;page++)native_unmap_page(id,page);
+        return old_address;
+    }
+    if(!(flags&2)&&native_range_free(id,old_address+old_size,new_size-old_size)){
+        if(!native_map_pages(id,old_address+old_size,new_size-old_size,attributes&(WRITE|NX|NATIVE_SHARED),1))return -12;
+        return old_address;
+    }
+    if(!(flags&1))return -12;
+    u64 target;
+    if(flags&2){target=new_address;if((target&4095)||target<USER_BASE||target>=NATIVE_STACK-4096||new_size>NATIVE_STACK-4096-target)return -22;
+        if(target<old_address+old_size&&old_address<target+new_size)return -22;
+        for(u64 page=(target-USER_BASE)/4096;page<(target+new_size-USER_BASE)/4096;page++)if(native_mapped(alias[page]))native_unmap_page(id,page);
+    }else{target=native_mapping_gap(id,new_size);if(!target)return -12;}
+    if(new_size-old_size>(u64)native_available_pages()*4096)return -12;
+    native_vm_barrier(id);
+    u64 destination=(target-USER_BASE)/4096;
+    for(u64 i=0;i<old_size/4096;i++){
+        pt[destination+i]=pt[first+i];alias[destination+i]=alias[first+i];pt[first+i]=0;alias[first+i]=0;
+        u64 from=native_phys(id)+(first+i)*4096,to=native_phys(id)+(destination+i)*4096;
+        __asm__ volatile("invlpg (%0); invlpg (%1)"::"r"(from),"r"(to):"memory");
+    }
+    if(!native_map_pages(id,target+old_size,new_size-old_size,attributes&(WRITE|NX|NATIVE_SHARED),1))return -12;
+    return target;
 }
 static void native_close(u32 id,int fd){
     NativeFd *f=&native_process[id].fd[fd];
@@ -198,6 +311,41 @@ static void native_close(u32 id,int fd){
     memset(f,0,sizeof(*f));
     if(file_index>=0&&ext2_ready)vfs_close_deleted(file_index);
 }
+/* Post a signal with siginfo details. SIGKILL and SIGSTOP act immediately;
+ * SIGCONT resumes a stopped group and reports it to the parent. Others become
+ * pending and are delivered before the task next returns to ring 3. */
+static void native_signal_post(u32 id,u32 signal,u32 sender,int code,u64 value){
+    if(!signal||signal>64||!native_active[id])return;NativeSignals *s=native_signals(id);
+    s->sender[signal]=sender;s->code[signal]=code;s->value[signal]=value;
+    if(task_kernel_sp[id]){s->pending|=1ULL<<(signal-1);return;}
+    if(signal==9){native_mark_group(id,-9);return;}
+    if(signal==19){native_stop_group(id,19);return;}
+    if(signal==18){u32 group=native_process[id].tgid;int resumed=0;
+        for(u32 member=APP_FIRST;member<TASK_COUNT;member++)if(native_active[member]&&native_process[member].tgid==group&&tasks[member].state==STOPPED){tasks[member].state=RUNNABLE;resumed=1;}
+        if(resumed){native_process[id].continued=1;native_process[id].stopped_signal=0;native_notify_parent(id,6,18);}}
+    s->pending|=1ULL<<(signal-1);
+}
+static void native_signal_queue(u32 id,u32 signal){native_signal_post(id,signal,0,0x80,0);}
+/* SIGCHLD to the parent with CLD_* code and the child's status value. */
+static void native_notify_parent(u32 id,int code,int value){
+    int parent=native_process[id].parent;if(parent<0||parent>=(int)TASK_COUNT||!native_active[parent])return;
+    native_signal_post(parent,17,native_process[id].tgid,code,(u64)(u32)value);
+}
+static void native_stop_group(u32 id,u32 signal){
+    u32 group=native_process[id].tgid;
+    for(u32 member=APP_FIRST;member<TASK_COUNT;member++)if(native_active[member]&&native_process[member].tgid==group&&(tasks[member].state==RUNNABLE||tasks[member].state==WAIT_EVENT)){
+        tasks[member].state=STOPPED;if(task_cpu[member]>=0&&(u32)task_cpu[member]!=cpu_local()->index)cpu_ipi(cpus[task_cpu[member]].apic_id,62);}
+    native_process[id].stopped_signal=signal;native_process[id].continued=0;native_notify_parent(id,5,signal);
+}
+/* Interval timers fire SIGALRM/SIGVTALRM/SIGPROF at tick granularity. Virtual
+ * and profiling timers advance with wall time; Aurora keeps no finer CPU
+ * accounting than the scheduler tick. Timers belong to the thread-group leader. */
+static void native_timers(void){
+    for(u32 id=APP_FIRST;id<TASK_COUNT;id++){if(!native_active[id]||tasks[id].state==DEAD||native_process[id].thread)continue;NativeProcess *p=&native_process[id];
+        for(int t=0;t<3;t++)if(p->timer_deadline[t]&&timer_ticks>=p->timer_deadline[t]){
+            p->timer_deadline[t]=p->timer_interval[t]?timer_ticks+p->timer_interval[t]:0;
+            native_signal_post(id,t==0?14:t==1?26:27,0,-2,0);}}
+}
 static void native_finish(u32 id,i64 code){
     native_wait_reset(id);
     NativeProcess *p=&native_process[id];native_thread_exit(id);
@@ -206,43 +354,68 @@ static void native_finish(u32 id,i64 code){
     task_kernel_sp[id]=0;if(p->thread)p->reaped=1;
     tasks[id].state=DEAD;exit_codes[id]=code;
     u32 leader=p->tgid>=100?p->tgid-100:id;
-    if(leader<TASK_COUNT&&native_group_refs[leader]&&!--native_group_refs[leader]){int parent=native_process[leader].parent;
-        exit_codes[leader]=code;
-        if(parent>=0&&native_active[parent])native_signals(parent)->pending|=1ULL<<16;}
+    if(leader<TASK_COUNT&&native_group_refs[leader]&&!--native_group_refs[leader]){
+        exit_codes[leader]=code;native_process[leader].timer_deadline[0]=native_process[leader].timer_deadline[1]=native_process[leader].timer_deadline[2]=0;
+        native_notify_parent(leader,code<0?2:1,code<0?(code<=-128?11:(int)-code):(int)code&255);}
     if(leader<TASK_COUNT&&!native_group_refs[leader])for(u32 child=APP_FIRST;child<TASK_COUNT;child++)if(native_active[child]&&native_process[child].parent==(int)leader)native_process[child].parent=-1;
     if(p->vfork_parent>=0){tasks[p->vfork_parent].state=RUNNABLE;p->vfork_parent=-1;}
 }
-static void native_signal_queue(u32 id,u32 signal){
-    if(task_kernel_sp[id]){native_signals(id)->pending|=1ULL<<(signal-1);return;}
-    if(signal==9){native_mark_group(id,-9);return;}
-    if(signal==19){tasks[id].state=4;native_process[id].stopped_signal=19;if(native_process[id].parent>=0)native_signals(native_process[id].parent)->pending|=1ULL<<16;return;}
-    if(signal==18&&tasks[id].state==4)tasks[id].state=RUNNABLE;
-    native_signals(id)->pending|=1ULL<<(signal-1);
-}
-static void native_signal_deliver(u32 id){
-    if(!native_active[id])return;NativeSignals *s=native_signals(id);NativeProcess *p=&native_process[id];Frame *f=&tasks[id].frame;
-    if(s->active&&!s->on_alt&&f->rsp>=s->saved.rsp-128)s->active=0;
-    if(s->active)return;
-    u64 pending=s->pending&~p->sigmask;if(!pending)return;
+static int native_on_alt(NativeSignals *s,u64 rsp){return s->alt_size&&rsp>s->alt_sp&&rsp-s->alt_sp<=s->alt_size;}
+/* Deliver one pending unblocked signal. Returns 1 when the task's frame or
+ * state changed. Handler frames follow the Linux rt_sigframe layout: return
+ * address, siginfo, ucontext with mcontext/uc_sigmask and FXSAVE state. The
+ * mask restored by sigreturn comes from the frame, so a mask saved by
+ * sigsuspend/pselect is reinstated after the handler rather than before it.
+ * Frames stack on the user stack, so handlers may nest. */
+static int native_signal_deliver(u32 id){
+    if(!native_active[id])return 0;NativeSignals *s=native_signals(id);NativeProcess *p=&native_process[id];Frame *f=&tasks[id].frame;
+    u64 pending=s->pending&~p->sigmask;if(!pending){if(p->restore_mask_valid){p->sigmask=p->restore_mask;p->restore_mask_valid=0;}return 0;}
     u32 signal=1;while(!(pending&1)){signal++;pending>>=1;}s->pending&=~(1ULL<<(signal-1));
-    NativeSigaction action=native_actions(id)[signal];if(action.handler==1)return;
-    if(!action.handler){if(signal==17||signal==18||signal==23||signal==28)return;
-        if(signal==20||signal==21||signal==22){tasks[id].state=4;p->stopped_signal=signal;if(p->parent>=0)native_signals(p->parent)->pending|=1ULL<<16;return;}
-        native_mark_group(id,-(i64)signal);return;}
-    if(!action.restorer||!native_buffer(id,action.handler,1,0)||!native_buffer(id,action.restorer,1,0)){native_mark_group(id,-11);return;}
+    NativeSigaction action=native_actions(id)[signal];if(action.handler==1)return 1;
+    if(!action.handler){if(signal==17||signal==18||signal==23||signal==28)return 1;
+        if(signal==20||signal==21||signal==22){native_stop_group(id,signal);return 1;}
+        native_mark_group(id,-(i64)signal);return 1;}
+    if(!action.restorer||!native_buffer(id,action.handler,1,0)||!native_buffer(id,action.restorer,1,0)){native_mark_group(id,-11);return 1;}
     u64 top=f->rsp;
-    if((action.flags&0x08000000)&&s->alt_size&&!s->on_alt){top=s->alt_sp+s->alt_size;s->on_alt=1;}
-    if(top<USER_BASE+1672){native_mark_group(id,-11);return;}
+    if((action.flags&0x08000000)&&s->alt_size&&!native_on_alt(s,f->rsp))top=s->alt_sp+s->alt_size;
+    if(top<USER_BASE+1672){native_mark_group(id,-11);return 1;}
     u64 base=(top-128-1536)&~15ULL,sp=base-8;
-    u8 *buffer=native_buffer(id,sp,1544,1);if(!buffer){native_mark_group(id,-11);return;}
-    memset(buffer,0,1544);*(u64 *)buffer=action.restorer;*(u32 *)(buffer+8)=signal;
+    u8 *buffer=native_buffer(id,sp,1544,1);if(!buffer){native_mark_group(id,-11);return 1;}
+    u64 frame_mask=p->restore_mask_valid?p->restore_mask:p->sigmask;p->restore_mask_valid=0;
+    memset(buffer,0,1544);*(u64 *)buffer=action.restorer;
+    int code=s->code[signal];
+    *(u32 *)(buffer+8)=signal;*(int *)(buffer+16)=code;
+    if(code>0&&(signal==11||signal==7||signal==8||signal==4))*(u64 *)(buffer+24)=s->fault_address;
+    else{*(u32 *)(buffer+24)=s->sender[signal];*(u32 *)(buffer+28)=1000;*(u64 *)(buffer+32)=s->value[signal];}
     u64 *context=(u64 *)(buffer+8+128+40);
-    u64 regs[]={f->r8,f->r9,f->r10,f->r11,f->r12,f->r13,f->r14,f->r15,f->rdi,f->rsi,f->rbp,f->rbx,f->rdx,f->rax,f->rcx,f->rsp,f->rip,f->flags,0x001b000000000023ULL,0,0,p->sigmask,0,base+512};
-    memcpy(context,regs,sizeof(regs));*(u64 *)(buffer+8+128+296)=p->sigmask;
-    memcpy(buffer+8+512,task_fp[id],512);memcpy(s->fp,task_fp[id],512);s->saved=*f;s->mask=p->sigmask;s->active=1;
-    p->sigmask|=action.mask;if(!(action.flags&0x40000000))p->sigmask|=1ULL<<(signal-1);
+    u64 regs[]={f->r8,f->r9,f->r10,f->r11,f->r12,f->r13,f->r14,f->r15,f->rdi,f->rsi,f->rbp,f->rbx,f->rdx,f->rax,f->rcx,f->rsp,f->rip,f->flags,0x001b000000000023ULL,0,0,frame_mask,s->fault_address,base+512};
+    memcpy(context,regs,sizeof(regs));*(u64 *)(buffer+8+128+296)=frame_mask;
+    *(u64 *)(buffer+8+128+16)=s->alt_sp;*(u64 *)(buffer+8+128+24)=native_on_alt(s,f->rsp)?1:s->alt_size?0:2;*(u64 *)(buffer+8+128+32)=s->alt_size;
+    memcpy(buffer+8+512,task_fp[id],512);
+    p->sigmask|=action.mask;if(!(action.flags&0x40000000))p->sigmask|=1ULL<<(signal-1);p->sigmask&=~((1ULL<<8)|(1ULL<<18));
     if(action.flags&0x80000000)native_actions(id)[signal].handler=0;
-    f->rsp=sp;f->rip=action.handler;f->rdi=signal;f->rsi=base;f->rdx=base+128;f->rax=0;
+    f->rsp=sp;f->rip=action.handler;f->rdi=signal;f->rsi=base;f->rdx=base+128;f->rax=0;native_signal_deliveries++;return 1;
+}
+/* rt_sigreturn: restore the frame that the handler returned through. Segment
+ * selectors and privileged flag bits are fixed; the FXSAVE image is sanitized. */
+static int native_sigreturn(u32 id){
+    NativeProcess *p=&native_process[id];Frame *f=&tasks[id].frame;u64 base=f->rsp;
+    u64 *g=native_buffer(id,base+128+40,24*8,0),*mask=native_buffer(id,base+128+296,8,0);
+    if(!g||!mask||g[16]>=NATIVE_END)return 0;
+    f->r8=g[0];f->r9=g[1];f->r10=g[2];f->r11=g[3];f->r12=g[4];f->r13=g[5];f->r14=g[6];f->r15=g[7];f->rdi=g[8];f->rsi=g[9];f->rbp=g[10];f->rbx=g[11];
+    f->rdx=g[12];f->rax=g[13];f->rcx=g[14];f->rsp=g[15];f->rip=g[16];f->flags=(g[17]&0xcd5)|0x202;f->cs=0x23;f->ss=0x1b;
+    if(g[23]){u8 *fp=native_buffer(id,g[23],512,0);if(!fp)return 0;memcpy(task_fp[id],fp,512);*(u32 *)(task_fp[id]+24)&=0xffff;}
+    p->sigmask=*mask&~((1ULL<<8)|(1ULL<<18));return 1;
+}
+/* Faults in native tasks become catchable signals when a handler is installed
+ * and the signal is not blocked; otherwise the existing containment kills. */
+static int native_fault_signal(u32 id,u64 vector,u64 address){
+    if(!native_active[id])return 0;
+    u32 signal=vector==0||vector==16||vector==19?8:vector==6?4:vector==17||vector==12?7:11;
+    NativeSigaction *action=&native_actions(id)[signal];
+    if(action->handler<2||(native_process[id].sigmask&(1ULL<<(signal-1))))return 0;
+    native_signals(id)->fault_address=address;
+    native_signal_post(id,signal,0,1,0);native_fault_signals++;return 1;
 }
 static int application_slot_available(u32 i){return tasks[i].state==DEAD&&task_cpu[i]<0&&!native_vm_refs[i]&&!native_fd_users[i]&&!native_group_refs[i]&&(!native_active[i]||native_process[i].reaped||native_process[i].parent<0);}
 static int native_slot(void){for(int i=APP_FIRST;i<APP_FIRST+NATIVE_SLOTS;i++)if(application_slot_available(i))return i;return -1;}
@@ -272,14 +445,16 @@ static i64 native_exec(u32 id,int index){
         char nested[256];error=native_elf_read(loader,0x08000000,0x0c000000,&interpreter,nested);
         if(error)return error;if(nested[0]||interpreter.header.type!=3)return -8;
     }
-    u64 needed=512+main.pages+(loader>=0?interpreter.pages:0),available=native_free_pages;
+    u64 needed=512+main.pages+(loader>=0?interpreter.pages:0),available=native_available_pages();
     if(native_vm_attached[id]&&native_vm_refs[native_space(id)]==1)for(u64 i=0;i<NATIVE_SIZE/4096;i++)if((native_alias_pt(id)[i]&1)&&NATIVE_PAGE_REFS[((native_alias_pt(id)[i]&0x000ffffffffff000ULL)-NATIVE_PAGE_FIRST)/4096]==1)available++;
     if(needed>available)return -12;
     native_tables(id);
     error=native_elf_map(id,index,&main);
     if(!error&&loader>=0)error=native_elf_map(id,loader,&interpreter);
     if(error){native_finish(id,127);return error;}
-    if(!native_map(id,NATIVE_STACK,0x200000,WRITE|NX)){native_finish(id,127);return -12;}
+    /* The 2 MiB stack is committed lazily; only the top 256 KiB holding the
+       initial arguments, environment and auxiliary vector is backed now. */
+    if(!native_map_pages(id,NATIVE_STACK,0x200000,WRITE|NX,1)||!native_map(id,NATIVE_END-0x40000,0x40000,WRITE|NX)){native_finish(id,127);return -12;}
     u64 *argv=exec_argv,env[128],sp=NATIVE_END-32;
     for(int i=exec_envc-1;i>=0;i--){u64 n=ns_length(exec_env[i])+1;sp-=n;memcpy((void *)(native_phys(id)+sp-USER_BASE),exec_env[i],n);env[i]=sp;}
     for(int i=exec_argc-1;i>=0;i--){u64 n=ns_length(exec_args[i])+1;sp-=n;memcpy((void *)(native_phys(id)+sp-USER_BASE),exec_args[i],n);argv[i]=sp;}
@@ -290,7 +465,9 @@ static i64 native_exec(u32 id,int index){
     for(int i=0;i<exec_argc;i++)*stack++=argv[i];*stack++=0;
     for(int i=0;i<exec_envc;i++)*stack++=env[i];*stack++=0;memcpy(stack,aux,sizeof(aux));
     NativeProcess *p=&native_process[id];p->min_brk=p->brk=(main.end+4095)&~4095ULL;p->map_next=NATIVE_MMAP_BASE;p->clear_tid=p->robust_head=0;
-    NativeSignals *signals=native_signals(id);memcpy(signals->action,native_actions(id),sizeof(signals->action));p->signal_owner=id;signals->active=signals->on_alt=0;signals->alt_sp=signals->alt_size=0;
+    NativeSignals *signals=native_signals(id);memcpy(signals->action,native_actions(id),sizeof(signals->action));p->signal_owner=id;signals->alt_sp=signals->alt_size=0;p->restore_mask_valid=0;
+    p->timer_deadline[0]=p->timer_deadline[1]=p->timer_deadline[2]=p->timer_interval[0]=p->timer_interval[1]=p->timer_interval[2]=0;
+    {const char *base=NFILES[index].path,*slash=base;while(*slash){if(*slash=='/')base=slash+1;slash++;}int i=0;while(base[i]&&i<15){p->name[i]=base[i];i++;}p->name[i]=0;}
     for(int i=1;i<65;i++)if(signals->action[i].handler!=1)memset(&signals->action[i],0,sizeof(NativeSigaction));
     ns_copy(p->exe,NFILES[index].path);
     for(int i=0;i<NATIVE_FDS;i++)if(p->fd[i].flags&0x80000)native_close(id,i);
@@ -449,8 +626,12 @@ static i64 native_io(u64 descriptor,u64 address,u64 size,int write){
         else{if(!of->offset)return -11;*(u64 *)buffer=f->index?1:of->offset;if(f->index)of->offset--;else of->offset=0;}
         return 8;
     }
-    if(f->kind==4){if(write)return native_console(buffer,size);NativeTty *tty=NATIVE_TTY;
-        if((int)tty->foreground!=native_process[current_task].pgid){native_signal_queue(current_task,21);return -11;}
+    if(f->kind==4){NativeTty *tty=NATIVE_TTY;int background=(int)tty->foreground!=native_process[current_task].pgid;
+        /* Background reads stop the group with SIGTTIN; writes do so with
+           SIGTTOU only under TOSTOP. Ignored or blocked stop signals yield EIO
+           for reads and let writes through, as on Linux. */
+        if(write){if(background&&(*(u32 *)(tty->termios+12)&0x100)){if(native_actions(current_task)[22].handler==1||(native_process[current_task].sigmask&(1ULL<<21)))return native_console(buffer,size);native_signal_queue(current_task,22);return -11;}return native_console(buffer,size);}
+        if(background){if(native_actions(current_task)[21].handler==1||(native_process[current_task].sigmask&(1ULL<<20)))return -5;native_signal_queue(current_task,21);return -11;}
         if(tty->eof){tty->eof=0;return 0;}if(!tty->ready)return -11;if(size>tty->ready)size=tty->ready;
         memcpy(buffer,tty->input,size);for(u64 i=size;i<tty->size;i++)tty->input[i-size]=tty->input[i];tty->size-=size;tty->ready-=size;return size;}
     if(f->kind==5)return write?(i64)size:0;
@@ -485,16 +666,20 @@ static i64 native_fork(Frame *frame,int vfork,u64 child_stack){
     native_wait_reset(id);
     u64 *source=native_pt(parent);
     if(vfork){native_vm_owner[id]=native_space(parent);native_vm_refs[native_vm_owner[id]]++;native_vm_attached[id]=1;task_cr3[id]=task_cr3[parent];native_active[id]=1;}
-    else{native_tables(id);
-    for(u64 i=0;i<NATIVE_SIZE/4096;i++)if(native_alias_pt(parent)[i]&1){
-        u64 physical=native_alias_pt(parent)[i]&0x000ffffffffff000ULL;
-        NATIVE_PAGE_REFS[(physical-NATIVE_PAGE_FIRST)/4096]++;
-        if((source[i]&WRITE)&&!(source[i]&NATIVE_SHARED))source[i]=(source[i]&~WRITE)|NATIVE_COW;
-        native_pt(id)[i]=source[i];native_alias_pt(id)[i]=native_alias_pt(parent)[i];
+    else{u64 lazy=0;for(u64 i=0;i<NATIVE_SIZE/4096;i++)if((native_alias_pt(parent)[i]&(PRESENT|NATIVE_LAZY))==NATIVE_LAZY)lazy++;
+    if(lazy>native_available_pages()){native_lazy_commit_failures++;return -12;} /* the inherited untouched span alone must fit in RAM */
+    native_tables(id);
+    for(u64 i=0;i<NATIVE_SIZE/4096;i++){u64 alias=native_alias_pt(parent)[i];
+        if(alias&1){u64 physical=alias&0x000ffffffffff000ULL;
+            NATIVE_PAGE_REFS[(physical-NATIVE_PAGE_FIRST)/4096]++;
+            if((source[i]&WRITE)&&!(source[i]&NATIVE_SHARED))source[i]=(source[i]&~WRITE)|NATIVE_COW;
+            native_pt(id)[i]=source[i];native_alias_pt(id)[i]=alias;}
+        else if(alias&NATIVE_LAZY){native_pt(id)[i]=source[i];native_alias_pt(id)[i]=NATIVE_LAZY;native_lazy_pages++;}
     }}
     native_process[id]=native_process[parent];task_affinity[id]=task_affinity[parent];NativeProcess *p=&native_process[id];p->parent=native_process[parent].tgid-100;p->vfork_parent=vfork?(int)parent:-1;p->reaped=0;
     p->fd=native_fd_tables[id];memcpy(p->fd,native_process[parent].fd,sizeof(native_fd_tables[id]));p->fd_owner=p->fs_owner=p->signal_owner=id;native_fd_users[id]=1;
     p->tgid=id+100;native_group_refs[id]=1;p->thread=0;p->clear_tid=p->robust_head=0;p->brk=native_process[native_space(parent)].brk;
+    p->restore_mask_valid=0;p->continued=0;p->stopped_signal=0;for(int t=0;t<3;t++)p->timer_deadline[t]=p->timer_interval[t]=0;
     *native_signals(id)=*native_signals(parent);native_signals(id)->pending=0;
     memcpy(native_actions(id),native_actions(parent),65*sizeof(NativeSigaction));
     for(int i=0;i<NATIVE_FDS;i++){NativeFd *f=&p->fd[i];if(f->kind)native_descriptions[f->description].refs++;if(f->kind==2)native_pipes[f->index].readers++;if(f->kind==3)native_pipes[f->index].writers++;}
@@ -533,7 +718,7 @@ static Frame *native_dispatch(Frame *f){
     u64 n=f->rax,a=f->rdi,b=f->rsi,c=f->rdx,d=f->r10,e=f->r8,g=f->r9;
     NativeProcess *p=&native_process[current_task];i64 result=-38;char path[256];
     NativeWait *waiting=&native_waits[current_task];
-    if(waiting->kind&&waiting->syscall==n&&!native_signals(current_task)->active&&waiting->interrupted){
+    if(waiting->kind&&waiting->syscall==n&&waiting->rip==f->rip&&waiting->interrupted){
         if(waiting->kind==5&&waiting->address&&!waiting->extra[0]){u64 *left=native_buffer(current_task,waiting->address,16,1);if(left){u64 ticks=waiting->deadline>timer_ticks?waiting->deadline-timer_ticks:0;left[0]=ticks/100;left[1]=(ticks%100)*10000000;}}
         native_wait_reset(current_task);tasks[current_task].frame.rax=-4;return schedule();}
     switch(n){
@@ -567,25 +752,82 @@ static Frame *native_dispatch(Frame *f){
         if(address&4095){result=-22;break;}
         if(address<USER_BASE||address>=NATIVE_STACK-4096||size>NATIVE_STACK-4096-address){result=-12;break;}
         if(!(d&32)&&(e>=NATIVE_FDS||p->fd[e].kind!=1)){result=-9;break;}
-        if(!native_map(current_task,address,size,((c&2)?WRITE:0)|((c&4)?0:NX)|((d&1)?NATIVE_SHARED:0))){result=-12;break;}
-        if(d&16)memset((void *)(native_phys(current_task)+address-USER_BASE),0,size);
-        if(!c)for(u64 i=(address-USER_BASE)/4096;i<(address+size-USER_BASE)/4096;i++)native_pt(current_task)[i]&=~1ULL;
+        /* Anonymous private pages are committed lazily; MAP_FIXED discards
+           what was there so the new range reads as zeros. File-backed and
+           shared mappings are populated now. */
+        int lazy=(d&32)&&!(d&1);u64 first=(address-USER_BASE)/4096,last=(address+size-USER_BASE)/4096;
+        if((d&16)&&lazy)for(u64 i=first;i<last;i++)native_unmap_page(current_task,i);
+        if(!native_map_pages(current_task,address,size,((c&2)?WRITE:0)|((c&4)?0:NX)|((d&1)?NATIVE_SHARED:0),lazy)){result=-12;break;}
+        if((d&16)&&!lazy)memset((void *)(native_phys(current_task)+address-USER_BASE),0,size);
+        if(!c)for(u64 i=first;i<last;i++){u64 *pt=native_pt(current_task);if(pt[i]&NATIVE_LAZY)pt[i]|=NATIVE_NONE;else pt[i]&=~1ULL;}
         if(!(d&32)){result=native_read(p->fd[e].index,g,(void *)(native_phys(current_task)+address-USER_BASE),b);if(result<0)break;}
         result=address;break;}
     case 10:native_vm_barrier(current_task);if((a&4095)||a<USER_BASE||!b||a>=NATIVE_END||b>NATIVE_END-a||(c&6)==6){result=-22;break;}
-        result=0;for(u64 i=(a-USER_BASE)/4096;i<=(a+b-1-USER_BASE)/4096;i++)if(!(native_alias_pt(current_task)[i]&1))result=-12;
-        if(result)break;for(u64 i=(a-USER_BASE)/4096;i<=(a+b-1-USER_BASE)/4096;i++){u64 *pt=native_pt(current_task);u64 physical=pt[i]&0x000ffffffffff000ULL;u64 writable=(c&2)?(NATIVE_PAGE_REFS[(physical-NATIVE_PAGE_FIRST)/4096]>1&&!(pt[i]&NATIVE_SHARED)?NATIVE_COW:WRITE):0;pt[i]=physical|(pt[i]&NATIVE_SHARED)|(c?PRESENT:0)|USER|writable|((c&4)?0:NX);}break;
+        result=0;for(u64 i=(a-USER_BASE)/4096;i<=(a+b-1-USER_BASE)/4096;i++)if(!native_mapped(native_alias_pt(current_task)[i]))result=-12;
+        if(result)break;for(u64 i=(a-USER_BASE)/4096;i<=(a+b-1-USER_BASE)/4096;i++){u64 *pt=native_pt(current_task);
+            if(pt[i]&NATIVE_LAZY){pt[i]=NATIVE_LAZY|USER|((c&2)?WRITE:0)|((c&4)?0:NX)|(c?0:NATIVE_NONE);continue;}
+            u64 physical=pt[i]&0x000ffffffffff000ULL;u64 writable=(c&2)?(NATIVE_PAGE_REFS[(physical-NATIVE_PAGE_FIRST)/4096]>1&&!(pt[i]&NATIVE_SHARED)?NATIVE_COW:WRITE):0;pt[i]=physical|(pt[i]&NATIVE_SHARED)|(c?PRESENT:0)|USER|writable|((c&4)?0:NX);}break;
     case 11:if((a&4095)||a<USER_BASE||!b||a>=NATIVE_END||b>NATIVE_END-a){result=-22;break;}
         for(u64 i=(a-USER_BASE)/4096;i<=(a+b-1-USER_BASE)/4096;i++)native_unmap_page(current_task,i);result=0;break;
     case 12:{NativeProcess *vm=&native_process[native_space(current_task)];
         if(a>=vm->min_brk&&a<NATIVE_MMAP_BASE-4096){
-            if(a>vm->brk){if(!native_map(current_task,vm->brk,a-vm->brk,WRITE|NX)){result=vm->brk;break;}}
+            if(a>vm->brk){if(!native_map_pages(current_task,vm->brk,a-vm->brk,WRITE|NX,1)){result=vm->brk;break;}}
             else for(u64 address=(a+4095)&~4095ULL;address<vm->brk;address+=4096)native_unmap_page(current_task,(address-USER_BASE)/4096);
             vm->brk=a;}result=vm->brk;break;}
     case 13:{if(!a||a>64||d!=8||(b&&(a==9||a==19))){result=-22;break;}NativeSigaction *in=b?native_buffer(current_task,b,32,0):0,*out=c?native_buffer(current_task,c,32,1):0;
         if((b&&!in)||(c&&!out)){result=-14;break;}NativeSigaction next;if(in)next=*in;if(out)*out=native_actions(current_task)[a];if(in)native_actions(current_task)[a]=next;result=0;break;}
-    case 15:{NativeSignals *s=native_signals(current_task);if(!s->active){native_finish(current_task,-11);return schedule();}
-        tasks[current_task].frame=s->saved;p->sigmask=s->mask;memcpy(task_fp[current_task],s->fp,512);s->active=s->on_alt=0;return schedule();}
+    case 15:if(!native_sigreturn(current_task))native_mark_group(current_task,-11);return schedule();
+    case 25:result=native_mremap(current_task,a,b,c,d,e);break;
+    case 26:if((a&4095)||(c&~7ULL)||((c&1)&&(c&4))){result=-22;break;}result=b&&!native_buffer(current_task,a,b,0)?-12:native_sync();break;
+    case 149:case 150:case 151:case 152:case 325:if(n==149||n==150||n==325){if(a&4095){result=-22;break;}result=!b||native_buffer(current_task,a,b,0)?0:-12;}else result=0;break;
+    case 34:if(!waiting->kind)*waiting=(NativeWait){.kind=7,.syscall=n,.deadline=~0ULL};result=-4096;break;
+    case 130:{if(b!=8){result=-22;break;}
+        if(!waiting->kind){u64 *in=native_buffer(current_task,a,8,0);if(!in){result=-14;break;}
+            *waiting=(NativeWait){.kind=7,.syscall=n,.deadline=~0ULL,.oldmask=p->sigmask,.mask_changed=1};p->sigmask=*in&~((1ULL<<8)|(1ULL<<18));}
+        result=-4096;break;}
+    case 127:{if(b!=8){result=-22;break;}u64 *out=native_buffer(current_task,a,8,1);if(!out){result=-14;break;}*out=native_signals(current_task)->pending;result=0;break;}
+    case 128:{if(d!=8){result=-22;break;}NativeSignals *s=native_signals(current_task);
+        if(!waiting->kind){u64 *set=native_buffer(current_task,a,8,0);if(!set){result=-14;break;}
+            *waiting=(NativeWait){.kind=8,.syscall=n,.bits=*set&~((1ULL<<8)|(1ULL<<18))};int error=native_deadline(c,0,0,0,&waiting->deadline);if(error){native_wait_reset(current_task);result=error;break;}}
+        u64 ready=s->pending&waiting->bits;
+        if(ready){u32 signal=1;while(!(ready&1)){signal++;ready>>=1;}s->pending&=~(1ULL<<(signal-1));
+            if(b){u8 *info=native_buffer(current_task,b,128,1);if(!info){result=-14;break;}memset(info,0,128);*(u32 *)info=signal;*(int *)(info+8)=s->code[signal];
+                *(u32 *)(info+16)=s->sender[signal];*(u32 *)(info+20)=1000;*(u64 *)(info+24)=s->value[signal];}
+            result=signal;break;}
+        result=timer_ticks>=waiting->deadline?-11:-4096;break;}
+    case 129:case 297:{u64 group=a,signal=n==129?b:c,info=n==129?c:d;if(signal>64){result=-22;break;}
+        u8 *in=native_buffer(current_task,info,128,0);if(!in){result=-14;break;}int code=*(int *)(in+8);if(code>=0){result=-1;break;}
+        u64 target=n==129?group:b;result=-3;
+        for(u32 id=APP_FIRST;id<TASK_COUNT;id++)if(native_active[id]&&tasks[id].state!=DEAD&&(n==129?native_process[id].tgid==group&&!native_process[id].thread:id+100==target&&native_process[id].tgid==group)){
+            if(signal)native_signal_post(id,signal,p->tgid,code,*(u64 *)(in+24));result=0;break;}
+        break;}
+    case 37:case 36:case 38:{NativeProcess *leader=&native_process[p->tgid-100];int which=n==37?0:(int)a;if(which<0||which>2){result=-22;break;}
+        u64 remaining=leader->timer_deadline[which]>timer_ticks?leader->timer_deadline[which]-timer_ticks:0,interval=leader->timer_interval[which];
+        if(n==37){leader->timer_deadline[0]=a?timer_ticks+a*100:0;leader->timer_interval[0]=0;result=(remaining+99)/100;break;}
+        if(n==38&&b){u64 *in=native_buffer(current_task,b,32,0);if(!in){result=-14;break;}
+            if((i64)in[0]<0||(i64)in[1]<0||(i64)in[2]<0||(i64)in[3]<0||in[1]>=1000000||in[3]>=1000000){result=-22;break;}
+            u64 next=in[2]*100+(in[3]+9999)/10000,period=in[0]*100+(in[1]+9999)/10000;
+            if(in[2]|in[3]){if(!next)next=1;}if((in[0]|in[1])&&!period)period=1;
+            leader->timer_deadline[which]=next?timer_ticks+next:0;leader->timer_interval[which]=period;}
+        u64 target=n==36?b:c;result=0;if(target){u64 *out=native_buffer(current_task,target,32,1);if(!out){result=-14;break;}
+            out[0]=interval/100;out[1]=(interval%100)*10000;out[2]=remaining/100;out[3]=(remaining%100)*10000;}break;}
+    case 100:{u64 *out=native_buffer(current_task,a,32,1);if(!out){result=-14;break;}u64 ticks=task_runs[current_task];out[0]=ticks;out[1]=ticks/8;out[2]=out[3]=0;result=timer_ticks;break;}
+    case 140:result=20;break; /* nice 0, encoded as 20-nice */
+    case 141:result=(int)c<-20||(int)c>19?-22:0;break;
+    case 142:{u64 *param=native_buffer(current_task,b,4,0);result=!param?-14:(int)*(u32 *)param?-22:0;break;}
+    case 143:{u32 *out=native_buffer(current_task,b,4,1);if(!out)result=-14;else{*out=0;result=0;}break;}
+    case 144:{u32 *param=native_buffer(current_task,c,4,0);result=!param?-14:b?-22:*param?-22:0;break;}
+    case 145:result=0;break;
+    case 146:result=a==1||a==2?99:a==0||a==3||a==5?0:-22;break;
+    case 147:result=a==1||a==2?1:a==0||a==3||a==5?0:-22;break;
+    case 148:{u64 *out=native_buffer(current_task,b,16,1);if(!out){result=-14;break;}out[0]=0;out[1]=10000000;result=0;}break;
+    case 157:if(a==15){if(!native_string(b,path,16)){char *in=native_buffer(current_task,b,15,0);if(!in){result=-14;break;}memcpy(path,in,15);path[15]=0;}
+            memcpy(p->name,path,16);result=0;}
+        else if(a==16){char *out=native_buffer(current_task,b,16,1);if(!out){result=-14;break;}memcpy(out,p->name,16);result=0;}
+        else if(a==1||a==38||a==22){result=0;}else if(a==2||a==39){u32 *out=native_buffer(current_task,b,4,1);if(!out){result=-14;break;}*out=0;result=0;}
+        else if(a==0x53564d41)result=0;else result=-22;break;
+    case 160:{if(a>=16){result=-22;break;}u64 *in=native_buffer(current_task,b,16,0);result=in?0:-14;break;} /* limits are advisory */
+    case 324:result=a==0?0x7f:(a&~0x7fULL)?-22:0;break;
     case 14:if(d!=8){result=-22;break;}if(c){u64 *out=native_buffer(current_task,c,8,1);if(!out){result=-14;break;}*out=p->sigmask;}
         if(b){u64 *in=native_buffer(current_task,b,8,0);if(!in){result=-14;break;}if(a==0)p->sigmask|=*in;else if(a==1)p->sigmask&=~*in;else if(a==2)p->sigmask=*in;else{result=-22;break;}}p->sigmask&=~((1ULL<<8)|(1ULL<<18));result=0;break;
     case 16:{if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}
@@ -624,8 +866,9 @@ static Frame *native_dispatch(Frame *f){
     case 24:result=0;break;
     case 27:{if((a&4095)||a<USER_BASE||a>=NATIVE_END||!b||b>NATIVE_END-a){result=-22;break;}
         u64 count=(b+4095)/4096;u8 *out=native_buffer(current_task,c,count,1);if(!out){result=-14;break;}
-        result=0;for(u64 i=0;i<count;i++)if(!(native_alias_pt(current_task)[(a-USER_BASE)/4096+i]&1)){result=-12;break;}
-        if(!result)memset(out,1,count);break;}
+        /* Lazily committed pages are mapped but not yet resident. */
+        result=0;for(u64 i=0;i<count;i++){u64 alias=native_alias_pt(current_task)[(a-USER_BASE)/4096+i];if(!native_mapped(alias)){result=-12;break;}out[i]=(alias&1)?1:0;}
+        break;}
     case 28:result=0;break; /* madvise: advisory only */
     case 32:case 33:case 292:{if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}int fd=n==32?native_fd_allocate():(int)b;
         if(n==292&&(a==b||(c&~0x80000ULL))){result=-22;break;}
@@ -636,8 +879,9 @@ static Frame *native_dispatch(Frame *f){
     case 115:if((int)a<0)result=-22;else if(!a)result=1;else {u32 *out=native_buffer(current_task,b,4,1);if(!out)result=-14;else {*out=1000;result=1;}}break;
     case 131:{NativeSignals *s=native_signals(current_task);u64 *in=a?native_buffer(current_task,a,24,0):0,*out=b?native_buffer(current_task,b,24,1):0;
         if((a&&!in)||(b&&!out)){result=-14;break;}u64 next[3];if(in)memcpy(next,in,24);
-        if(out){out[0]=s->alt_sp;out[1]=s->on_alt?1:s->alt_size?0:2;out[2]=s->alt_size;}
-        result=0;if(in){u32 flags=next[1];if(s->on_alt)result=-1;else if(flags&~2U)result=-22;
+        int on_alt=native_on_alt(s,f->rsp);
+        if(out){out[0]=s->alt_sp;out[1]=on_alt?1:s->alt_size?0:2;out[2]=s->alt_size;}
+        result=0;if(in){u32 flags=next[1];if(on_alt)result=-1;else if(flags&~0x80000002U)result=-22;
             else if(flags&2){s->alt_sp=s->alt_size=0;}else if(next[2]<2048)result=-12;
             else if(!native_buffer(current_task,next[0],next[2],1))result=-14;
             else{s->alt_sp=next[0];s->alt_size=next[2];}}break;}
@@ -653,15 +897,29 @@ static Frame *native_dispatch(Frame *f){
         if(n==234&&(b<100+APP_FIRST||b>=100+TASK_COUNT||native_process[b-100].tgid!=a))break;
         for(u32 id=APP_FIRST;id<TASK_COUNT;id++)if(native_active[id]&&tasks[id].state!=DEAD&&
             (target==id+100||(n==62&&((i64)target==-1||(!target&&native_process[id].pgid==p->pgid)||((i64)target<-1&&native_process[id].pgid==-(i64)target))))){
-            if(signal)native_signal_queue(id,signal);result=0;
+            if(signal)native_signal_post(id,signal,p->tgid,n==62?0:-6,0);result=0;
         }
         break;}
-    case 61:{int found=0;result=-10;for(int i=APP_FIRST;i<APP_FIRST+NATIVE_SLOTS;i++)if(native_active[i]&&native_process[i].parent==(int)p->tgid-100&&!native_process[i].thread&&!native_process[i].reaped&&((i64)a==-1||a==(u64)i+100)){
-        if(tasks[i].state==4&&(c&2)&&native_process[i].stopped_signal){if(b){int *out=native_buffer(current_task,b,4,1);if(!out){result=-14;break;}*out=(native_process[i].stopped_signal<<8)|127;}
-            native_process[i].stopped_signal=0;result=i+100;break;}
-        found=1;if(tasks[i].state==DEAD&&!native_group_refs[i]){if(b){int *out=native_buffer(current_task,b,4,1);if(!out){result=-14;break;}*out=exit_codes[i]<0?(exit_codes[i]<=-128?11:(-(int)exit_codes[i]&127)):((int)exit_codes[i]&255)<<8;}
-            if(d){void *out=native_buffer(current_task,d,144,1);if(!out){result=-14;break;}memset(out,0,144);}native_process[i].reaped=1;result=i+100;break;}}
-        if(found&&result==-10)result=(c&1)?0:-11;break;}
+    case 61:case 247:{
+        /* wait4(pid,status,options,rusage) and waitid(idtype,id,infop,options,rusage).
+           Children report exits, stops (WUNTRACED) and SIGCONT (WCONTINUED). */
+        u64 options=n==61?c:d;if(options&~0x4000000fULL){result=-22;break;}
+        i64 which=n==61?(i64)a:a==0?-1:a==1?(i64)b:a==2?(b?-(i64)b:0):-2;
+        if(which==-2||(n==247&&!(options&0xe))){result=-22;break;}
+        int found=0,child=-1,kind=0;for(int i=APP_FIRST;i<APP_FIRST+NATIVE_SLOTS;i++)if(native_active[i]&&native_process[i].parent==(int)p->tgid-100&&!native_process[i].thread&&!native_process[i].reaped&&
+            (which==-1||which==i+100||(which==0&&native_process[i].pgid==p->pgid)||(which<-1&&native_process[i].pgid==-which))){
+            found=1;
+            if(tasks[i].state==DEAD&&!native_group_refs[i]&&(n==61||(options&4))){child=i;kind=1;break;}
+            if(tasks[i].state==STOPPED&&(options&2)&&native_process[i].stopped_signal){child=i;kind=2;break;}
+            if(native_process[i].continued&&(options&8)){child=i;kind=3;break;}}
+        if(child<0){result=!found?-10:(options&1)?0:-11;break;}
+        NativeProcess *cp=&native_process[child];int status=kind==1?(exit_codes[child]<0?(exit_codes[child]<=-128?11:(-(int)exit_codes[child]&127)):((int)exit_codes[child]&255)<<8):kind==2?(cp->stopped_signal<<8)|127:0xffff;
+        int code=kind==1?(exit_codes[child]<0?2:1):kind==2?5:6,value=kind==1?(exit_codes[child]<0?(exit_codes[child]<=-128?11:(int)-exit_codes[child]):(int)exit_codes[child]&255):kind==2?cp->stopped_signal:18;
+        if(n==61&&b){int *out=native_buffer(current_task,b,4,1);if(!out){result=-14;break;}*out=status;}
+        if(n==247&&c){u8 *info=native_buffer(current_task,c,128,1);if(!info){result=-14;break;}memset(info,0,128);*(u32 *)info=17;*(int *)(info+8)=code;*(u32 *)(info+16)=child+100;*(u32 *)(info+20)=1000;*(int *)(info+24)=value;}
+        u64 usage=n==61?d:e;if(usage){void *out=native_buffer(current_task,usage,144,1);if(!out){result=-14;break;}memset(out,0,144);}
+        if(kind==1){if(!(options&0x1000000))cp->reaped=1;}else if(kind==2){if(!(options&0x1000000))cp->stopped_signal=0;}else if(!(options&0x1000000))cp->continued=0;
+        result=n==61?child+100:0;break;}
     case 63:{char *out=native_buffer(current_task,a,390,1);if(!out){result=-14;break;}memset(out,0,390);ns_copy(out,"Aurora");ns_copy(out+65,"aurora");ns_copy(out+130,"0.3");ns_copy(out+195,"GCC compatibility");ns_copy(out+260,"x86_64");result=0;break;}
     case 72:if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}if(b==1)result=(p->fd[a].flags&0x80000)?1:0;
         else if(b==2){p->fd[a].flags=(p->fd[a].flags&~0x80000U)|((c&1)?0x80000:0);result=0;}
@@ -683,6 +941,28 @@ static Frame *native_dispatch(Frame *f){
         if(fat_ready&&fat_path(path)){FRESULT error=f_mkdir(fat_name(path));result=error?fat_error(error):0;break;}
         result=ext2_ready?-ext4_dir_mk(path):-38;if(!result)result=-ext4_mode_set(path,(n==258?c:b)&0777&~p->umask);break;
     case 84:result=native_user_path(a,path)?native_remove_directory(path):-14;break;
+    case 86:case 265:{char target[256];if(n==265&&(e&~0x1400ULL)){result=-22;break;}
+        result=native_at_path(n==86?-100:(i64)a,n==86?a:b,path);if(result)break;
+        result=native_at_path(n==86?-100:(i64)c,n==86?b:d,target);if(result)break;
+        if(!ext2_ready||(fat_ready&&(fat_path(path)||fat_path(target)))){result=-95;break;}
+        char from[256],to[256];result=ext2_resolve(from,path,n==265&&(e&0x400));if(result)break;result=ext2_resolve(to,target,0);if(result)break;
+        int kind=vfs_kind(from);if(kind<0){result=kind;break;}if(kind==2){result=-1;break;}
+        int exists=vfs_kind(to);if(exists>=0){result=-17;break;}if(exists!=-2){result=exists;break;}
+        result=-ext4_flink(from,to);break;}
+    case 76:{if(!native_user_path(a,path)){result=-14;break;}int index=native_find(path);if(index<0){result=-2;break;}
+        if(NFILES[index].kind==2){result=-21;break;}if(!native_writable(path)){result=-30;break;}
+        if((i64)b<0||(!ext2_ready&&b>NFILES[index].size)){result=-22;break;}NFILES[index].size=b;result=native_commit(index)?0:-5;break;}
+    case 285:{if(a>=NATIVE_FDS||p->fd[a].kind!=1){result=-9;break;}if(!(native_descriptions[p->fd[a].description].flags&3)){result=-9;break;}
+        if((i64)c<0||(i64)d<=0){result=-22;break;}if(b&~1ULL){result=-95;break;}
+        u64 end=c+d;if(!(b&1)&&end>NFILES[p->fd[a].index].size){if(!ext2_ready){result=-22;break;}NFILES[p->fd[a].index].size=end;result=native_commit(p->fd[a].index)?0:-5;}else result=0;break;}
+    case 137:case 138:{if(n==138&&(a>=NATIVE_FDS||!p->fd[a].kind)){result=-9;break;}
+        if(n==137){if(!native_user_path(a,path)){result=-14;break;}if(native_find(path)<0){result=-2;break;}}else ns_copy(path,p->fd[a].kind==1?NFILES[p->fd[a].index].path:"/");
+        u64 *out=native_buffer(current_task,b,120,1);if(!out){result=-14;break;}memset(out,0,120);
+        int fat=fat_ready&&fat_path(path);out[0]=fat?0x4d44:ext2_ready?0xef53:0x9fa0;out[1]=out[9]=4096;out[8]=255;
+        if(fat){DWORD clusters=0;FATFS *fs;if(f_getfree(fat_name(path),&clusters,&fs)==FR_OK){out[1]=out[9]=(u64)fs->csize*512;out[2]=fs->n_fatent-2;out[3]=out[4]=clusters;}}
+        else if(ext2_ready){struct ext4_mount_stats stats;if(!ext4_mount_point_stats("/",&stats)){out[1]=out[9]=stats.block_size;out[2]=stats.blocks_count;out[3]=out[4]=stats.free_blocks_count;out[5]=stats.inodes_count;out[6]=stats.free_inodes_count;}}
+        result=0;break;}
+    case 73:if(a>=NATIVE_FDS||!p->fd[a].kind)result=-9;else{u64 op=b&~4ULL;result=op==1||op==2||op==8?0:-22;}break; /* single-owner volume: locks are advisory */
     case 82:case 264:case 316:{char target[256];result=native_at_path(n==82?-100:(i64)a,n==82?a:b,path);if(result)break;
         result=native_at_path(n==82?-100:(i64)c,n==82?b:d,target);if(result)break;
         result=ext2_ready?vfs_rename(path,target,n==316?(u32)e:0):-38;break;}
@@ -710,7 +990,9 @@ static Frame *native_dispatch(Frame *f){
         if(n==93){if(a>=NATIVE_FDS||p->fd[a].kind!=1){result=-9;break;}ns_copy(path,NFILES[p->fd[a].index].path);}
         else if(!native_user_path(a,path)){result=-14;break;}int index=native_find(path);if(index<0){result=-2;break;}
         result=ext2_ready&&!(fat_ready&&fat_path(path))?-ext4_owner_set(NFILES[index].path,1000,1000):0;break;}
-    case 97:case 302:{u64 target=n==97?b:d;u64 resource=n==97?a:b;if(target){u64 *out=native_buffer(current_task,target,16,1);if(!out){result=-14;break;}out[0]=out[1]=resource==3?0x200000:resource==7?NATIVE_FDS:~0ULL;}result=0;break;}
+    case 97:case 302:{u64 target=n==97?b:d;u64 resource=n==97?a:b;if(resource>=16){result=-22;break;}
+        if(n==302&&c&&!native_buffer(current_task,c,16,0)){result=-14;break;}
+        if(target){u64 *out=native_buffer(current_task,target,16,1);if(!out){result=-14;break;}out[0]=out[1]=resource==3?0x200000:resource==7?NATIVE_FDS:~0ULL;}result=0;break;}
     case 98:{void *out=native_buffer(current_task,b,144,1);if(!out)result=-14;else{memset(out,0,144);result=0;}break;}
     case 99:{u8 *out=native_buffer(current_task,a,112,1);if(!out){result=-14;break;}memset(out,0,112);*(u64 *)out=timer_ticks/100;
         *(u64 *)(out+32)=NATIVE_SIZE;*(u64 *)(out+40)=NATIVE_SIZE/2;*(u32 *)(out+104)=1;result=0;break;}
@@ -751,12 +1033,12 @@ static Frame *native_dispatch(Frame *f){
     case 318:{if(c&~3ULL){result=-22;break;}if(!b){result=0;break;}if(b>256)b=256;u8 *out=native_buffer(current_task,a,b,1);result=out?entropy_fill(out,b):-14;break;}
     default:serial("NATIVE unsupported syscall=");hex(n);serial("\r\n");break;
     }
-    if(result==-4096){tasks[current_task].frame.rip-=2;tasks[current_task].state=WAIT_EVENT;return schedule();}
-    if(result==-11&&(n==61||((n==0||n==1||n==19||n==20)&&a<NATIVE_FDS&&!(native_descriptions[p->fd[a].description].flags&0x800)))){
+    if(result==-4096){waiting->rip=f->rip;tasks[current_task].frame.rip-=2;tasks[current_task].state=WAIT_EVENT;return schedule();}
+    if(result==-11&&(n==61||n==247||((n==0||n==1||n==19||n==20)&&a<NATIVE_FDS&&!(native_descriptions[p->fd[a].description].flags&0x800)))){
         native_wait_blocks++;
-        native_wait_reset(current_task);*waiting=(NativeWait){.kind=n==61?2:1,.syscall=n,.address=a,.deadline=~0ULL,.count=(n==1||n==20)?4:1};
+        native_wait_reset(current_task);*waiting=(NativeWait){.kind=(n==61||n==247)?2:1,.syscall=n,.address=a,.deadline=~0ULL,.count=n==61?c|1:n==247?d|1:(n==1||n==20)?4:1,.rip=f->rip};
         tasks[current_task].frame.rip-=2;tasks[current_task].state=WAIT_EVENT;return schedule();}
-    if(waiting->kind&&waiting->syscall==n&&!native_signals(current_task)->active)native_wait_reset(current_task);
+    if(waiting->kind&&waiting->syscall==n&&(!waiting->rip||waiting->rip==f->rip))native_wait_reset(current_task);
     tasks[current_task].frame.rax=result;
     return schedule();
 }

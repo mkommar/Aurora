@@ -38,20 +38,24 @@ continue to use AuroraFS on the boot disk through their original ABI.
 | Processes and syscalls | Fork/exec/wait, shared open descriptions, descriptor flags, pipes, basic signal handlers/masks/return, process groups, poll/select/pselect, musl pthreads/futexes, multicore and musl dynamic linking | Full POSIX signals, finer native kernel locks and comprehensive job control |
 | Memory | BIOS E820 discovery, allocated physical pages, reclamation on unmap/exit, growable brk/mmap, 512 MiB virtual spaces, copy-on-write fork and shared thread address spaces | Paging to disk, scalable page-table allocation and broader OOM testing |
 | Filesystem namespace | Directories, relative descriptors, symlinks, rename/replacement, deletion, modes, timestamps, directory enumeration | Unified legacy/native namespace, full ownership/access rules, crash orphan recovery |
-| Block I/O | PCI discovery, transitional VirtIO DMA queue, MSI-X/MSI/INTx routing, blocked callers, timeout and device flush | Multiple outstanding requests, IOMMU, user-space storage service; ATA and early boot still poll |
+| Block I/O | PCI discovery, transitional VirtIO DMA queue with eight batched in-flight chains, MSI-X/MSI/INTx routing, interrupt-driven ATA (IRQ14) for the boot and development volumes, blocked callers, timeout and device flush | IOMMU, user-space storage service; only early boot still polls |
 | Disk formats | GPT CRC validation, MBR partition discovery, writable ext2 and FAT32, independent checker script | Backup GPT recovery, in-Aurora fsck, journaling/power-loss recovery |
 | Shell and TTY | GNU Bash, interactive stdin, canonical editing, echo, control keys, quoting, environment, redirection and pipelines | ANSI terminal emulation, Readline editing and complete terminal/job-control semantics |
 | Build tools | Pinned-source GNU bootstrap, existing native GCC/binutils, Make builds applications and itself inside Aurora | Rebuilding every package and GCC itself inside Aurora; broader configure compatibility |
 
 Native processes have a 512 MiB virtual range and a guarded 2 MiB stack.
-There are 13 normal application/thread slots (shared with legacy applications),
-64 descriptors per process and 4,096 cached native paths. Physical pages come
-from usable E820 memory between 256 MiB and 1 GiB. Fork shares private pages copy-on-write and preserves anonymous shared mappings.
+There are 29 application/thread slots (13 shared with legacy applications plus
+16 native-only), 64 descriptors per process, 1,024 open descriptions, 64 pipes
+and 4,096 cached native paths. Physical pages come from usable E820 memory
+between 256 MiB and 1 GiB and are committed to anonymous mappings on first
+touch. Fork shares private pages copy-on-write and preserves anonymous shared mappings.
 Threads share a page-table root, heap, descriptor table, cwd and umask, with
 separate user/kernel stacks, TLS, register state and signal masks. See
 [Thread and IRQ validation](THREADS.md) for supported primitives and limits.
-Signals support one active handler at a time; signal-frame context editing and
-alternate stacks are not implemented. The filesystem uses one synthetic user.
+Signal handlers nest through frames on the user or alternate stack, restore
+their mask through `rt_sigreturn`, and receive fault addresses; interval timers,
+`sigsuspend`/`sigtimedwait`/`sigqueue` and `WCONTINUED`/`waitid` work. See
+[PLATFORM.md](PLATFORM.md). The filesystem uses one synthetic user.
 Open ext2 files survive unlink through temporary orphan names; abrupt shutdown
 can leave those names behind. FAT32 has more limited Unix metadata semantics.
 

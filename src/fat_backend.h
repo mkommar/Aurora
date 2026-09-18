@@ -8,11 +8,11 @@ DSTATUS disk_initialize(BYTE drive){return drive||!fat_partition_base?STA_NOINIT
 DSTATUS disk_status(BYTE drive){return disk_initialize(drive);}
 DRESULT disk_read(BYTE drive,BYTE *buffer,LBA_t sector,UINT count){
     if(drive||sector>=fat_partition_sectors||count>fat_partition_sectors-sector)return RES_PARERR;
-    for(u32 i=0;i<count;i++)if(!native_raw_disk(fat_partition_base+sector+i,buffer+i*512,0))return RES_ERROR;return RES_OK;
+    return native_raw_disk_range(fat_partition_base+sector,buffer,count,0)?RES_OK:RES_ERROR;
 }
 DRESULT disk_write(BYTE drive,const BYTE *buffer,LBA_t sector,UINT count){
     if(drive||sector>=fat_partition_sectors||count>fat_partition_sectors-sector)return RES_PARERR;
-    for(u32 i=0;i<count;i++)if(!native_raw_disk(fat_partition_base+sector+i,(void *)(buffer+i*512),1))return RES_ERROR;return RES_OK;
+    return native_raw_disk_range(fat_partition_base+sector,(void *)buffer,count,1)?RES_OK:RES_ERROR;
 }
 DRESULT disk_ioctl(BYTE drive,BYTE command,void *buffer){
     if(drive)return RES_PARERR;
