@@ -663,7 +663,10 @@ static Frame *native_dispatch(Frame *f){
         result=ext2_ready?vfs_rename(path,target,n==316?(u32)e:0):-38;break;}
     case 88:case 266:if(!ext2_ready)result=-38;else{char target[256];
         if(!native_string(a,target,sizeof(target))){result=-14;break;}
-        result=native_at_path(n==266?(i64)b:-100,n==266?c:b,path);if(!result)result=-ext4_fsymlink(target,path);}break;
+        result=native_at_path(n==266?(i64)b:-100,n==266?c:b,path);if(result)break;
+        if(fat_ready&&fat_path(path)){result=-95;break;}
+        char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;
+        int kind=vfs_kind(resolved);result=kind>=0?-17:kind!=-2?kind:-ext4_fsymlink(target,resolved);}break;
     case 87:case 263:{result=native_at_path(n==263?(i64)a:-100,n==263?b:a,path);if(result)break;
         if(n==263&&c){result=c==512?native_remove_directory(path):-22;break;}
         if(ext2_ready&&!(fat_ready&&fat_path(path))){char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;uint32_t mode;result=-ext4_mode_get(resolved,&mode);if(result)break;

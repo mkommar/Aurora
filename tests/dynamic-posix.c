@@ -42,6 +42,11 @@ int main(int argc,char **argv){
     int linkdir=open(".",O_RDONLY|O_DIRECTORY);assert(linkdir>=0);unlink("./dyn-link");
     assert(!symlinkat("dyn",linkdir,"dyn-link"));char linktarget[8];assert(readlink("./dyn-link",linktarget,sizeof linktarget)==3&&!memcmp(linktarget,"dyn",3));
     assert(!unlink("./dyn-link"));close(linkdir);
+    unlink("./dyn-alias");assert(!symlink(".","./dyn-alias"));
+    assert(!symlinkat("dyn",AT_FDCWD,"./dyn-alias/dyn-link"));
+    errno=0;assert(symlink("missing","./dyn-link")==-1&&errno==EEXIST);
+    assert(readlink("./dyn-link",linktarget,sizeof linktarget)==3&&!memcmp(linktarget,"dyn",3));
+    assert(!unlink("./dyn-link")&&!unlink("./dyn-alias"));
     assert(library_value()==40);local=10;pthread_t t;void *result;
     assert(!pthread_create(&t,0,worker,0));assert(!pthread_join(t,&result));assert(result==(void *)73&&local==10);assert(library_value()==41);
     void *lib=dlopen("./libprobe.so",RTLD_NOW|RTLD_LOCAL);assert(lib);int (*fn)(void)=dlsym(lib,"library_value");assert(fn&&fn()==42);assert(!dlclose(lib));

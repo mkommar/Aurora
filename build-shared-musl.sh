@@ -6,7 +6,9 @@ printf '%s\n' '9b969322012d796dc23dda27a35866034fa67d8fb67e0e2c45c913c3d43219dd 
 printf '%s\n' '87d68678b0996c9fb19aa736c58607d4a43d3bb562c7fc7f4064f0d5b9f1e2d4  /work/musl-Fork-fixed.c' | sha256sum -c -
 if test "${1:-}" != resume; then tar -xzf musl-1.2.2.tar.gz; fi
 cd musl-1.2.2
-cp /work/musl-Fork-fixed.c src/process/_Fork.c
+if ! printf '%s\n' '87d68678b0996c9fb19aa736c58607d4a43d3bb562c7fc7f4064f0d5b9f1e2d4  src/process/_Fork.c' | sha256sum -c --status; then
+    cp /work/musl-Fork-fixed.c src/process/_Fork.c
+fi
 if test "${1:-}" != resume; then
     CC=gcc CFLAGS=-Os /usr/bin/bash ./configure --prefix=/usr --syslibdir=/lib --disable-static --disable-wrapper
 fi
