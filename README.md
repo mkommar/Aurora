@@ -32,6 +32,13 @@ nested signal delivery with `siginfo`, interval timers, batched VirtIO and
 interrupt-driven ATA storage, and the build-critical syscalls that GNU
 configure scripts and build tools expect; see [PLATFORM.md](PLATFORM.md) and
 `python test-platform.py`.
+Legacy and native processes now share one filesystem namespace (AuroraFS at
+`/aurorafs`, `/work` fallback for the legacy calls), hard links, owners and
+timestamps are stored, crash orphans are reclaimed at mount, a damaged GPT
+copy is recovered from the other one, and `fsck-aurora` checks GPT, ext2,
+FAT32 and AuroraFS from inside Aurora; see [FILESYSTEMS.md](FILESYSTEMS.md)
+and `python test-filesystems.py`, which cuts power mid-write and verifies
+recovery.
 
 See the updated [20-item roadmap](ROADMAP.md) for remaining work, including
 network downloads, native source builds, USB, GTK, sound, Radeon and Nouveau.

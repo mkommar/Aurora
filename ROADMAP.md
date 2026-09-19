@@ -1,6 +1,6 @@
 # Aurora: 20 remaining action items
 
-Updated 2026-09-18. This replaces the earlier list. Status for items 1–3 is recorded below; the remaining entries are planned work. Retain Aurora's original kernel, ext2 for
+Updated 2026-09-18. This replaces the earlier list. Status for items 1–4 is recorded below; the remaining entries are planned work. Retain Aurora's original kernel, ext2 for
 development, FAT32 for exchange, and the preference for reusable GNU code.
 The 2026-09-18 platform work is described in [PLATFORM.md](PLATFORM.md) and
 verified by `test-platform.py`.
@@ -41,9 +41,20 @@ now is downloading, configuring, compiling and installing source inside Aurora.
    heuristic overcommit admission with fault-in failure counters. Remaining:
    finer native-domain locking, dynamic task/page-table allocation beyond 32
    slots, disk-backed paging and GCC rebuild measurements.
-4. **Filesystem correctness and recovery.** Unify legacy/native access, complete
-   links and metadata semantics, reclaim crash orphans, support backup-GPT
-   recovery and run filesystem checkers inside Aurora. Test interrupted writes.
+4. **Filesystem correctness and recovery.** Implemented 2026-09-18: one
+   namespace for legacy and native processes (AuroraFS at `/aurorafs`; the legacy
+   file and spawn calls fall back to `/work` on the development volume), `stat`
+   from the raw ext2 inode with hard-link counts, owners and three timestamps,
+   `chown`/`lchown`/`utimes`, RTC-stamped FAT32 entries, crash-orphan reclaim at
+   mount on ext2 and FAT32, an ext2 clean/in-use superblock state that detects
+   unclean stops, backup-GPT recovery with rewrite of the damaged copy, read-only
+   `/dev/disk` and `/dev/boot` raw devices, and `fsck-aurora`, a GPT/ext2/FAT32/
+   AuroraFS checker compiled and run inside Aurora. `test-filesystems.py` cuts
+   power during a metadata-heavy workload, reboots, verifies `fsync`ed data and
+   orphan reclaim, damages both GPT copies and runs the checker after each step.
+   Remaining: an ext2 journal or ordered metadata writes (uncommitted data still
+   depends on `sync`), FAT32 dirty-bit handling, and a repairing mode for the
+   checker. See [FILESYSTEMS.md](FILESYSTEMS.md).
 5. **Networking.** Start with VirtIO networking, sockets, Ethernet, ARP, IPv4,
    ICMP, UDP/TCP, DHCP and DNS. Evaluate reusable protocol-stack code. Demonstrate
    connections originating in Aurora without a host download bridge.

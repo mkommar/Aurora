@@ -57,6 +57,16 @@ static int ata_transfer(u32 lba,void *buffer,int write,int slave) {
     for(int i=0;i<4;i++)(void)inb(0x3f6);
     return ata_wait(0);
 }
+/* IDENTIFY DEVICE, polled before scheduling: the sector count locates the
+ * backup GPT when the primary header is unreadable. */
+static u64 ata_identify(int slave){
+    outb(0x1f6,slave?0xb0:0xa0);for(int i=0;i<4;i++)(void)inb(0x3f6);
+    if(!ata_wait(0))return 0;outb(0x1f7,0xec);if(!ata_wait(1))return 0;
+    u16 words[256];u16 *p=words;u64 count=256;
+    __asm__ volatile("rep insw":"+D"(p),"+c"(count):"d"((u16)0x1f0):"memory");
+    if(words[83]&(1<<10))return words[100]|((u64)words[101]<<16)|((u64)words[102]<<32)|((u64)words[103]<<48);
+    return words[60]|((u64)words[61]<<16);
+}
 static int sector_io(u32 lba,void *buffer,int write) {if(lba>=32768)return 0;return ata_transfer(lba,buffer,write,0);}
 static int disk_flush(void) {
     u32 sequence=++ata_sequence;ata_arm();outb(0x1f7,0xe7);
@@ -98,18 +108,29 @@ static i64 file_read(int index,void *buffer,u64 capacity) {
     }
     return size;
 }
+/* Directory records are rewritten after their data reached the disk, so an
+ * interrupted write leaves the previous record intact. */
+static int file_write_directory(int index){return sector_io(FS_LBA+1+index/8,(u8 *)directory+(index/8)*512,1)&&disk_flush();}
+static int file_free_slot(void){for(int i=0;i<FS_FILES;i++)if(!directory[i].used)return i;return -1;}
+static int native_ready;
+static i64 native_shell_file(u64 address,int write);
+static int native_shell_exists(const char *name);
+static i64 native_shell_executable(const char *name,void *buffer,u64 capacity);
+/* One namespace for legacy applications: AuroraFS names first, then /work on
+ * the development volume, where files that exist there or do not fit here go. */
 static i64 file_transfer(u64 address,int write) {
     FileRequest *source=user_buffer(current_task,address,sizeof(FileRequest),0);
     if(!source)return ERR_POINTER;
     FileRequest request=*source;
-    if(!fs_ready)return ERR_IO;
+    if(!fs_ready)return native_ready?native_shell_file(address,write):ERR_IO;
     if(!name_valid(request.name))return ERR_NAME;
+    int index=file_find(request.name);
+    if(index<0&&native_ready&&(!write||native_shell_exists(request.name)||request.size>FS_MAX_SIZE||file_free_slot()<0))return native_shell_file(address,write);
     if(request.size>FS_MAX_SIZE)return ERR_LIMIT;
     void *buffer=request.size?user_buffer(current_task,request.buffer,request.size,!write):0;
     if(request.size&&!buffer)return ERR_POINTER;
-    int index=file_find(request.name);
     if(!write)return index<0?ERR_NOT_FOUND:file_read(index,buffer,request.size);
-    if(index<0)for(int i=0;i<FS_FILES;i++)if(!directory[i].used){index=i;break;}
+    if(index<0)index=file_free_slot();
     if(index<0)return ERR_LIMIT;
     for(u64 offset=0;offset<request.size;offset+=512) {
         memset(disk_sector,0,512);u64 n=request.size-offset;if(n>512)n=512;
@@ -120,9 +141,7 @@ static i64 file_transfer(u64 address,int write) {
     FileEntry previous=directory[index];
     memset(&directory[index],0,sizeof(FileEntry));memcpy(directory[index].name,request.name,32);
     directory[index].used=1;directory[index].size=request.size;
-    if(!sector_io(FS_LBA+1+index/8,(u8 *)directory+(index/8)*512,1)||!disk_flush()) {
-        directory[index]=previous;return ERR_IO;
-    }
+    if(!file_write_directory(index)){directory[index]=previous;return ERR_IO;}
     return request.size;
 }
 typedef struct {
@@ -135,9 +154,15 @@ static i64 spawn_application(u64 address) {
     if(!source)return ERR_POINTER;
     SpawnRequest request=*source;
     if(!name_valid(request.name)||request.args[127])return ERR_NAME;
-    if(!fs_ready)return ERR_IO;
-    int index=file_find(request.name);if(index<0)return ERR_NOT_FOUND;
-    i64 size=file_read(index,executable,FS_MAX_SIZE);if(size<0)return size;
+    int index=fs_ready?file_find(request.name):-1;i64 size;
+    if(index>=0){size=file_read(index,executable,FS_MAX_SIZE);if(size<0)return size;}
+    else{
+        /* SDK applications may also live in /work; their entry is the image base,
+           which no musl binary has, so other ELFs fall through to native spawn. */
+        if(!native_ready)return fs_ready?ERR_NOT_FOUND:ERR_IO;
+        size=native_shell_executable(request.name,executable,FS_MAX_SIZE);if(size<0)return ERR_NOT_FOUND;
+        if(size<(i64)sizeof(ElfHeader)||((ElfHeader *)executable)->entry!=USER_BASE)return ERR_NOT_FOUND;
+    }
     if(size<(i64)sizeof(ElfHeader))return ERR_FORMAT;
     ElfHeader *h=(ElfHeader *)executable;
     if(h->ident[0]!=127||h->ident[1]!='E'||h->ident[2]!='L'||h->ident[3]!='F'||

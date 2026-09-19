@@ -24,10 +24,81 @@ static int native_raw_disk_range(u32 sector,void *data,u32 count,int write){
     return 1;
 }
 static int native_disk(u32 sector,void *data,int write){if(sector>=native_partition_sectors)return 0;return native_raw_disk(sector+native_partition_base,data,write);}
+/* Read-only raw devices for checkers: /dev/disk is the development disk,
+ * /dev/boot the AuroraFS boot disk. Whole sectors go straight to the caller. */
+static u64 native_device_size(int device){return device?32768ULL*512:native_disk_sectors*512;}
+static i64 native_device_read(int device,u64 offset,void *buffer,u64 count){
+    u64 size=native_device_size(device);if(offset>=size)return 0;if(count>size-offset)count=size-offset;
+    for(u64 done=0;done<count;){u64 pos=offset+done,n=512-(pos&511);if(n>count-done)n=count-done;u32 lba=(u32)(pos/512);
+        if(n==512&&!device){u64 whole=(count-done)/512;if(whole>1024)whole=1024;if(!native_raw_disk_range(lba,(u8 *)buffer+done,(u32)whole,0))return -5;done+=whole*512;continue;}
+        if(!(device?sector_io(lba,native_sector,0):native_raw_disk(lba,native_sector,0)))return -5;
+        memcpy((u8 *)buffer+done,native_sector+(pos&511),n);done+=n;}
+    return count;
+}
 static int native_path(char *,const char *,const char *);
 #include "fat_backend.h"
 #include "ext2_backend.h"
+/* AuroraFS appears to native processes as /aurorafs: up to 32 flat files of
+ * 64 KiB in fixed extents, so writes stay in place and never move data. The
+ * cached entry remembers its slot and is honoured only while the name matches. */
+static int aurorafs_path(const char *p){const char *prefix="/aurorafs";for(int i=0;i<9;i++)if(p[i]!=prefix[i])return 0;return fs_ready&&(!p[9]||p[9]=='/');}
+static const char *aurorafs_name(const char *p){return p[9]?p+10:"";}
+static int aurorafs_cache(const char *path,int kind,u64 size,u32 slot){
+    u32 index;for(index=0;index<native_count;index++)if(!NFILES[index].kind)break;
+    if(index==NATIVE_FILE_CACHE)return -28;if(index==native_count)native_count++;
+    NativeFile *f=&NFILES[index];memset(f,0,sizeof(*f));ns_copy(f->path,path);f->kind=kind;f->size=size;f->sector=slot;
+    *(u32 *)f->pad=kind==2?0755:0644;*(u32 *)(f->pad+4)=1;return (int)index;
+}
+static int aurorafs_find(const char *path){
+    const char *name=aurorafs_name(path);if(!*name)return aurorafs_cache(path,2,0,0);
+    if(!name_valid(name))return -2;int slot=file_find(name);if(slot<0)return -2;
+    return aurorafs_cache(path,1,directory[slot].size,slot);
+}
+static int aurorafs_slot(NativeFile *f){
+    if(f->kind==2)return -1;u32 slot=(u32)f->sector;const char *name=aurorafs_name(f->path);
+    if(slot<FS_FILES&&directory[slot].used&&name_equal(directory[slot].name,name))return (int)slot;
+    int found=file_find(name);if(found>=0)f->sector=found;return found; /* legacy calls may have moved the name */
+}
+static int aurorafs_create(const char *path){
+    const char *name=aurorafs_name(path);if(!name_valid(name))return -22;if(file_find(name)>=0)return -17;
+    int slot=file_free_slot();if(slot<0)return -28;
+    memset(&directory[slot],0,sizeof(FileEntry));memcpy(directory[slot].name,name,ns_length(name));directory[slot].used=1;
+    if(!file_write_directory(slot)){directory[slot].used=0;return -5;}return aurorafs_find(path);
+}
+/* Byte span inside a slot's extent; NULL data writes zeros. */
+static int aurorafs_span(int slot,u64 pos,u8 *data,u64 n,int write){
+    for(u64 done=0;done<n;){u64 at=pos+done,m=512-(at&511);if(m>n-done)m=n-done;u32 lba=FS_DATA_LBA+slot*128+(u32)(at/512);
+        if(m==512&&data){if(!sector_io(lba,data+done,write))return 0;}
+        else{if(!sector_io(lba,disk_sector,0))return 0;
+            if(write){if(data)memcpy(disk_sector+(at&511),data+done,m);else memset(disk_sector+(at&511),0,m);if(!sector_io(lba,disk_sector,1))return 0;}
+            else memcpy(data+done,disk_sector+(at&511),m);}
+        done+=m;}
+    return 1;
+}
+static i64 aurorafs_io(int index,u64 offset,void *buffer,u64 count,int write){
+    NativeFile *f=&NFILES[index];if(f->kind==2)return -21;int slot=aurorafs_slot(f);if(slot<0)return -2;u64 size=directory[slot].size;
+    if(!write){if(offset>=size)return 0;if(count>size-offset)count=size-offset;return aurorafs_span(slot,offset,buffer,count,0)?(i64)count:-5;}
+    if(offset>FS_MAX_SIZE||count>FS_MAX_SIZE-offset)return -27;
+    if(offset>size&&!aurorafs_span(slot,size,0,offset-size,1))return -5;
+    if(!aurorafs_span(slot,offset,buffer,count,1))return -5;
+    if(offset+count>size){if(!disk_flush())return -5;directory[slot].size=(u32)(offset+count);if(!file_write_directory(slot))return -5;}
+    f->size=directory[slot].size;return count;
+}
+static int aurorafs_commit(int index){
+    NativeFile *f=&NFILES[index];if(f->kind==2)return 1;int slot=aurorafs_slot(f);if(slot<0)return !f->kind;
+    if(!f->kind){memset(&directory[slot],0,sizeof(FileEntry));return file_write_directory(slot);}
+    if(f->size>FS_MAX_SIZE)return 0;u64 size=directory[slot].size;
+    if(f->size>size&&!aurorafs_span(slot,size,0,f->size-size,1))return 0;
+    if(f->size!=size){directory[slot].size=(u32)f->size;if(!disk_flush()||!file_write_directory(slot))return 0;}
+    return 1;
+}
+static int aurorafs_rename(const char *from,const char *to){
+    const char *name=aurorafs_name(to);if(!name_valid(name))return -22;int slot=file_find(aurorafs_name(from));if(slot<0)return -2;
+    int old=file_find(name);if(old>=0&&old!=slot){memset(&directory[old],0,sizeof(FileEntry));if(!file_write_directory(old))return -5;}
+    memset(directory[slot].name,0,32);memcpy(directory[slot].name,name,ns_length(name));return file_write_directory(slot)?0:-5;
+}
 static void native_fs_init(void){
+    native_disk_sectors=virtio_present?virtio_sectors:ata_identify(1);
     if(!native_partitions_init())return;
     fat_init();
     if(!native_disk(0,native_sector,0))return;
@@ -54,13 +125,16 @@ static int native_path(char *out,const char *cwd,const char *input){
         if(length+n+1>255)return 0;if(length>1)out[length++]='/';memcpy(out+length,begin,n);length+=n;
     }out[length]=0;return 1;
 }
+/* Paths served by a backend other than the ext2 volume skip symlink resolution. */
+static int native_foreign(const char *path){return (fat_ready&&fat_path(path))||aurorafs_path(path);}
 static int native_find(const char *path){
-    if(!native_ready)return -1;char resolved[256];
-    if(ext2_ready&&!(fat_ready&&fat_path(path))){int error=ext2_resolve(resolved,path,1);if(error)return error;path=resolved;}
+    if(!native_ready&&!aurorafs_path(path))return -1;char resolved[256];
+    if(ext2_ready&&!native_foreign(path)){int error=ext2_resolve(resolved,path,1);if(error)return error;path=resolved;}
     for(u32 i=0;i<native_count;i++)if(NFILES[i].kind&&ns_equal(NFILES[i].path,path))return (int)i;
-    return fat_ready&&fat_path(path)?fat_find(path):ext2_ready?ext2_find(path):-1;
+    return aurorafs_path(path)?aurorafs_find(path):fat_ready&&fat_path(path)?fat_find(path):ext2_ready?ext2_find(path):-1;
 }
 static int native_commit(int index){
+    if(aurorafs_path(NFILES[index].path))return aurorafs_commit(index);
     if(fat_ready&&fat_path(NFILES[index].path))return fat_commit(index);
     if(ext2_ready)return ext2_commit(index);
     if(!native_disk(index+1,&NFILES[index],1))return 0;
@@ -70,6 +144,7 @@ static int native_commit(int index){
     return native_disk(0,native_sector,1);
 }
 static i64 native_read(int index,u64 offset,void *buffer,u64 count){
+    if(aurorafs_path(NFILES[index].path))return aurorafs_io(index,offset,buffer,count,0);
     if(fat_ready&&fat_path(NFILES[index].path))return fat_io(index,offset,buffer,count,0);
     if(ext2_ready)return ext2_io(index,offset,buffer,count,0);
     NativeFile *f=&NFILES[index];if(f->kind==2)return -21;
@@ -79,8 +154,9 @@ static i64 native_read(int index,u64 offset,void *buffer,u64 count){
         else {if(!native_disk(f->sector+pos/512,native_sector,0))return -5;memcpy((u8 *)buffer+done,native_sector+(pos&511),n);}done+=n;
     }return count;
 }
-static int native_writable(const char *p){return ext2_ready||(p[0]=='/'&&p[1]=='t'&&p[2]=='m'&&p[3]=='p'&&p[4]=='/')||(p[0]=='/'&&p[1]=='w'&&p[2]=='o'&&p[3]=='r'&&p[4]=='k'&&p[5]=='/');}
+static int native_writable(const char *p){return ext2_ready||aurorafs_path(p)||(p[0]=='/'&&p[1]=='t'&&p[2]=='m'&&p[3]=='p'&&p[4]=='/')||(p[0]=='/'&&p[1]=='w'&&p[2]=='o'&&p[3]=='r'&&p[4]=='k'&&p[5]=='/');}
 static int native_create(const char *path){
+    if(aurorafs_path(path))return aurorafs_create(path);
     if(fat_ready&&fat_path(path))return fat_create(path);
     if(ext2_ready)return ext2_create(path);
     if(!native_ready)return -5;if(!native_writable(path))return -30;
@@ -96,6 +172,7 @@ static int native_create(const char *path){
     if(!native_commit(i)){serial("NATIVE create commit failed\r\n");return -5;}return (int)i;
 }
 static i64 native_write(int index,u64 offset,const void *buffer,u64 count){
+    if(aurorafs_path(NFILES[index].path))return aurorafs_io(index,offset,(void *)buffer,count,1);
     if(fat_ready&&fat_path(NFILES[index].path))return fat_io(index,offset,(void *)buffer,count,1);
     if(ext2_ready)return ext2_io(index,offset,(void *)buffer,count,1);
     NativeFile *f=&NFILES[index];if(!native_writable(f->path))return -30;

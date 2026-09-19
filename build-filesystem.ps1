@@ -9,7 +9,7 @@ foreach ($source in (Get-ChildItem "$ext4/src/*.c" | Where-Object { $_.BaseName 
 }
 Invoke-Checked "$LlvmBin/clang.exe" ($flags + $fsFlags + @('-c','src/fs_platform/runtime.c','-o',"$output/fs-runtime.o"))
 $fsObjects += "$output/fs-runtime.o"
-$fsFlags += '-Ithird_party/fatfs-r016/source'
+$fsFlags += @('-Ithird_party/fatfs-r016/source','-DFF_FS_NORTC=0')  # the kernel supplies get_fattime()
 foreach ($name in @('ff','ffunicode')) {
     Invoke-Checked "$LlvmBin/clang.exe" (($flags | Where-Object { $_ -ne '-Werror' }) + $fsFlags + @('-ffunction-sections','-fdata-sections','-c',"third_party/fatfs-r016/source/$name.c",'-o',"$output/$name.o"))
     $fsObjects += "$output/$name.o"

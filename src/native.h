@@ -309,7 +309,7 @@ static void native_close(u32 id,int fd){
     if(f->kind==2&&native_pipes[f->index].readers)native_pipes[f->index].readers--;
     if(f->kind==3&&native_pipes[f->index].writers)native_pipes[f->index].writers--;
     memset(f,0,sizeof(*f));
-    if(file_index>=0&&ext2_ready)vfs_close_deleted(file_index);
+    if(file_index>=0)vfs_close_deleted(file_index);
 }
 /* Post a signal with siginfo details. SIGKILL and SIGSTOP act immediately;
  * SIGCONT resumes a stopped group and reports it to the parent. Others become
@@ -491,13 +491,19 @@ static i64 native_spawn(u64 address){
     exec_envc=5;ns_copy(exec_env[0],"PATH=/usr/local/bin:/usr/bin:/bin");ns_copy(exec_env[1],"TMPDIR=/tmp");ns_copy(exec_env[2],"LC_ALL=C");ns_copy(exec_env[3],"HOME=/work");ns_copy(exec_env[4],"TERM=dumb");
     native_defaults(id);i64 result=native_exec(id,index);if(result<0)native_finish(id,127);return result<0?ERR_FORMAT:id;
 }
+/* Legacy names map to /work on the development volume. */
+static int native_shell_exists(const char *name){char path[256];return native_ready&&native_path(path,"/work",name)&&native_find(path)>=0;}
+static i64 native_shell_executable(const char *name,void *buffer,u64 capacity){
+    char path[256];if(!native_ready||!native_path(path,"/work",name))return ERR_NOT_FOUND;int index=native_find(path);
+    if(index<0||NFILES[index].kind!=1)return ERR_NOT_FOUND;if(NFILES[index].size>capacity)return ERR_LIMIT;return native_read(index,0,buffer,NFILES[index].size);
+}
 static i64 native_shell_file(u64 address,int write){
     FileRequest *r=user_buffer(current_task,address,sizeof(FileRequest),0);if(!r)return ERR_POINTER;
-    if(!native_ready)return ERR_NOT_FOUND;if(!name_valid(r->name)||r->size>FS_MAX_SIZE)return ERR_NAME;
+    if(!native_ready)return ERR_NOT_FOUND;if(!name_valid(r->name)||r->size>USER_SIZE)return ERR_NAME;
     void *buffer=r->size?user_buffer(current_task,r->buffer,r->size,!write):0;if(r->size&&!buffer)return ERR_POINTER;
     char path[256];native_path(path,"/work",r->name);int index=native_find(path);
     if(index<0&&write)index=native_create(path);if(index<0)return ERR_NOT_FOUND;
-    if(write){NFILES[index].size=0;return native_write(index,0,buffer,r->size);}
+    if(write){i64 n=native_write(index,0,buffer,r->size);if(n<0)return n;NFILES[index].size=r->size;return native_commit(index)?n:ERR_IO;} /* replace, truncating any previous tail */
     return native_read(index,0,buffer,r->size);
 }
 static i64 native_shell_list(u64 slot,u64 address){
@@ -534,6 +540,13 @@ static i64 native_getdents(u64 fd,u64 address,u64 size){
     NativeProcess *p=&native_process[current_task];if(fd>=NATIVE_FDS||p->fd[fd].kind!=1)return -9;
     NativeFile *f=&NFILES[p->fd[fd].index];if(f->kind!=2)return -20;
     u8 *out=native_buffer(current_task,address,size,1);if(!out)return -14;
+    if(aurorafs_path(f->path)){NativeDescription *of=&native_descriptions[p->fd[fd].description];u64 done=0;
+        for(u32 slot=(u32)of->offset;slot<FS_FILES;slot++){if(!directory[slot].used){of->offset=slot+1;continue;}
+            u64 length=(20+ns_length(directory[slot].name)+7)&~7ULL;if(length>size-done){if(!done)return -22;break;}
+            memset(out+done,0,length);*(u64 *)(out+done)=0x41000000+slot;*(u64 *)(out+done+8)=slot+1;*(u16 *)(out+done+16)=length;out[done+18]=8;
+            memcpy(out+done+19,directory[slot].name,ns_length(directory[slot].name));of->offset=slot+1;done+=length;}
+        return done;
+    }
     if(fat_ready&&fat_path(f->path)){
         DIR dir;FRESULT error=f_opendir(&dir,fat_name(f->path));if(error)return fat_error(error);
         NativeDescription *of=&native_descriptions[p->fd[fd].description];u64 position=0,done=0;FILINFO info;
@@ -558,7 +571,8 @@ static i64 native_getdents(u64 fd,u64 address,u64 size){
     ext4_dir_close(&dir);return done;
 }
 static i64 native_remove_directory(const char *path){
-    if(ns_equal(path,"/")||ns_equal(path,"/exchange"))return -16;
+    if(ns_equal(path,"/")||ns_equal(path,"/exchange")||ns_equal(path,"/aurorafs"))return -16;
+    if(aurorafs_path(path))return vfs_kind(path)==1?-20:-2;
     if(fat_ready&&fat_path(path)){FRESULT error=f_unlink(fat_name(path));if(error)return error==FR_DENIED?-39:fat_error(error);}
     else{
         if(!ext2_ready)return -38;ext4_dir dir;int error=ext4_dir_open(&dir,path);if(error)return -error;
@@ -574,6 +588,10 @@ static i64 native_open(const char *path,u32 flags,u32 mode){
     if(ns_equal(path,"/dev/urandom")||ns_equal(path,"/dev/random")){
         if(flags&3)return -13;if(!entropy_ready)return -19;int description=native_description(flags);if(!description)return -23;
         p->fd[fd]=(NativeFd){.kind=7,.description=description,.flags=flags&0x80000U};return fd;}
+    if(ns_equal(path,"/dev/disk")||ns_equal(path,"/dev/boot")){int device=path[5]=='b';
+        /* Raw devices are read-only: checkers inspect volumes the kernel has mounted. */
+        if(device?!fs_ready:!native_ready)return -19;if(flags&3)return -13;int description=native_description(flags);if(!description)return -23;
+        p->fd[fd]=(NativeFd){.kind=9,.index=device,.description=description,.flags=flags&0x80000U};return fd;}
     int index=native_find(path);
     if(index<0){if(!(flags&64))return -2;index=native_create(path);if(index<0)return index;
         *(u32 *)NFILES[index].pad=mode&0777&~p->umask;*(u32 *)(NFILES[index].pad+4)=1;if(!native_commit(index))return -5;}
@@ -621,6 +639,7 @@ static i64 native_io(u64 descriptor,u64 address,u64 size,int write){
     if(!size)return 0;void *buffer=native_buffer(current_task,address,size,!write);if(!buffer)return -14;
     if(f->kind==6)return write?network_send(f->index,buffer,size,0,0,0):network_recv(f->index,buffer,size,0,0,0);
     if(f->kind==7)return write?-9:entropy_fill(buffer,size>256?256:size);
+    if(f->kind==9){if(write)return -9;i64 result=native_device_read(f->index,of->offset,buffer,size);if(result>0)of->offset+=result;return result;}
     if(f->kind==8){
         if(write){u64 value=*(u64 *)buffer;if(value==~0ULL)return -22;if(value>~1ULL-of->offset)return -11;of->offset+=value;}
         else{if(!of->offset)return -11;*(u64 *)buffer=f->index?1:of->offset;if(f->index)of->offset--;else of->offset=0;}
@@ -646,18 +665,31 @@ static i64 native_io(u64 descriptor,u64 address,u64 size,int write){
     if(write&&(of->flags&1024))of->offset=NFILES[f->index].size;
     i64 result=write?native_write(f->index,of->offset,buffer,size):native_read(f->index,of->offset,buffer,size);if(result>0)of->offset+=result;return result;
 }
-static i64 native_stat(int index,u64 address,int terminal){
-    if(!terminal&&ns_equal(NFILES[index].path,"/dev/null"))terminal=1;
+/* struct stat comes from the backend's own metadata: the ext2 inode supplies
+ * inode number, link count, owners, sizes and times, so hard links share an
+ * identity; FAT supplies its timestamps; AuroraFS slots are the inode. The
+ * cached size is refreshed here so aliases of one inode do not go stale. */
+static i64 native_stat(int index,u64 address,int special){
+    if(!special&&ns_equal(NFILES[index].path,"/dev/null"))special=1;
     u8 *out=native_buffer(current_task,address,144,1);if(!out)return -14;memset(out,0,144);
-    *(u64 *)(out)=1;*(u64 *)(out+8)=index+1;*(u64 *)(out+16)=1;
-    u32 mode=terminal?0666:(*(u32 *)(NFILES[index].pad+4)?*(u32 *)NFILES[index].pad:0755);
-    *(u32 *)(out+24)=(terminal?(terminal==6?0140000:0020000):(NFILES[index].kind==2?0040000:NFILES[index].kind==3?0120000:0100000))|mode;
-    *(u32 *)(out+28)=1000;*(u32 *)(out+32)=1000;
-    *(u64 *)(out+48)=terminal?0:NFILES[index].size;*(u64 *)(out+56)=4096;*(u64 *)(out+64)=terminal?0:(NFILES[index].size+511)/512;
-    if(!terminal&&ext2_ready&&!(fat_ready&&fat_path(NFILES[index].path))){
-        uint32_t value=0;ext4_atime_get(NFILES[index].path,&value);*(u64 *)(out+72)=value;
-        ext4_mtime_get(NFILES[index].path,&value);*(u64 *)(out+88)=value;ext4_ctime_get(NFILES[index].path,&value);*(u64 *)(out+104)=value;
+    *(u64 *)(out+16)=1;*(u32 *)(out+28)=1000;*(u32 *)(out+32)=1000;*(u64 *)(out+56)=4096;
+    if(special==9){*(u64 *)(out+8)=0x900+index;*(u32 *)(out+24)=0060000|0400;u64 size=native_device_size(index);*(u64 *)(out+48)=size;*(u64 *)(out+64)=size/512;return 0;}
+    if(special){*(u64 *)out=1;*(u64 *)(out+8)=index+1;*(u32 *)(out+24)=(special==6?0140000:0020000)|0666;return 0;}
+    NativeFile *f=&NFILES[index];int fat=fat_ready&&fat_path(f->path),legacy=aurorafs_path(f->path);
+    *(u64 *)out=legacy?3:fat?2:1;*(u64 *)(out+8)=index+1;
+    *(u32 *)(out+24)=(f->kind==2?0040000:f->kind==3?0120000:0100000)|(*(u32 *)(f->pad+4)?*(u32 *)f->pad:0755);
+    if(legacy){int slot=aurorafs_slot(f);if(slot>=0){f->size=directory[slot].size;*(u64 *)(out+8)=0x41000000+slot;}}
+    else if(fat){FILINFO info;if(f->path[9]=='/'&&f_stat(fat_name(f->path),&info)==FR_OK){f->size=info.fsize;u64 stamp=fat_epoch(info.fdate,info.ftime);*(u64 *)(out+72)=*(u64 *)(out+88)=*(u64 *)(out+104)=stamp;}
+        u64 hash=1469598103934665603ULL;for(const char *s=f->path;*s;s++)hash=(hash^(u8)*s)*1099511628211ULL;*(u64 *)(out+8)=0x200000000ULL|(hash&0xffffffffULL);}
+    else if(ext2_ready){uint32_t ino;struct ext4_inode inode;
+        if(!ext4_raw_inode_fill(f->path,&ino,&inode)){
+            *(u64 *)(out+8)=ino;*(u64 *)(out+16)=inode.links_count;*(u32 *)(out+24)=inode.mode;
+            *(u32 *)(out+28)=inode.uid|((u32)inode.osd2.linux2.uid_high<<16);*(u32 *)(out+32)=inode.gid|((u32)inode.osd2.linux2.gid_high<<16);
+            f->size=inode.size_lo|((u64)inode.size_hi<<32);*(u64 *)(out+64)=inode.blocks_count_lo;
+            *(u64 *)(out+72)=inode.access_time;*(u64 *)(out+88)=inode.modification_time;*(u64 *)(out+104)=inode.change_inode_time;
+        }
     }
+    *(u64 *)(out+48)=f->size;if(!*(u64 *)(out+64))*(u64 *)(out+64)=(f->size+511)/512;
     return 0;
 }
 static i64 native_fork(Frame *frame,int vfork,u64 child_stack){
@@ -714,6 +746,14 @@ static void native_reap_pending(void){
     for(u32 id=APP_FIRST;id<TASK_COUNT;id++)if(native_reap[id]&&id!=current_task&&task_cpu[id]<0){native_reap[id]=0;native_finish(id,exit_codes[id]);}
     filesystem_leave();
 }
+/* Syscalls that may change a volume; the first one after a sync marks ext2 in use again. */
+static int native_mutates(Frame *f){u64 n=f->rax;NativeProcess *p=&native_process[current_task];
+    switch(n){case 1:case 18:case 20:case 296:return f->rdi<NATIVE_FDS&&p->fd[f->rdi].kind==1;
+    case 2:return (f->rsi&(64|512|3))!=0;case 257:return (f->rdx&(64|512|3))!=0;
+    case 76:case 77:case 82:case 83:case 84:case 86:case 87:case 88:case 90:case 91:case 92:case 93:case 94:case 132:case 235:
+    case 258:case 260:case 261:case 263:case 264:case 265:case 266:case 268:case 280:case 285:case 316:case 452:return 1;
+    default:return 0;}
+}
 static Frame *native_dispatch(Frame *f){
     u64 n=f->rax,a=f->rdi,b=f->rsi,c=f->rdx,d=f->r10,e=f->r8,g=f->r9;
     NativeProcess *p=&native_process[current_task];i64 result=-38;char path[256];
@@ -739,12 +779,12 @@ static Frame *native_dispatch(Frame *f){
     case 3:if(a>=NATIVE_FDS||!p->fd[a].kind)result=-9;else{native_close(current_task,a);result=0;}break;
     case 4:case 6:case 262:{u64 address=n==262?b:a,target=n==262?c:b;
         result=native_at_path(n==262?(i64)a:-100,address,path);if(result)break;int index;
-        if(ext2_ready&&!(fat_ready&&fat_path(path))&&(n==6||(n==262&&(d&256)))){char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;
+        if(ext2_ready&&!native_foreign(path)&&(n==6||(n==262&&(d&256)))){char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;
             index=-1;for(u32 i=0;i<native_count;i++)if(NFILES[i].kind&&ns_equal(NFILES[i].path,resolved)){index=i;break;}if(index<0)index=ext2_find(resolved);
         }else index=native_find(path);result=index<0?-2:native_stat(index,target,0);break;}
-    case 5:result=a>=NATIVE_FDS||!p->fd[a].kind?-9:native_stat(p->fd[a].index,b,p->fd[a].kind==6?6:p->fd[a].kind!=1);break;
-    case 8:if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}if(p->fd[a].kind==5){result=c>4?-22:0;break;}if(p->fd[a].kind!=1){result=-29;break;}
-        {i64 position=(i64)b;if(c==1)position+=(i64)native_descriptions[p->fd[a].description].offset;else if(c==2)position+=(i64)NFILES[p->fd[a].index].size;else if(c!=0){result=-22;break;}
+    case 5:result=a>=NATIVE_FDS||!p->fd[a].kind?-9:native_stat(p->fd[a].index,b,p->fd[a].kind==6?6:p->fd[a].kind==9?9:p->fd[a].kind!=1);break;
+    case 8:if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}if(p->fd[a].kind==5){result=c>4?-22:0;break;}if(p->fd[a].kind!=1&&p->fd[a].kind!=9){result=-29;break;}
+        {i64 position=(i64)b;if(c==1)position+=(i64)native_descriptions[p->fd[a].description].offset;else if(c==2)position+=(i64)(p->fd[a].kind==9?native_device_size(p->fd[a].index):NFILES[p->fd[a].index].size);else if(c!=0){result=-22;break;}
         if(position<0)result=-22;else result=native_descriptions[p->fd[a].description].offset=(u64)position;}break;
     case 9:{u64 size=(b+4095)&~4095ULL;if(!b||b>NATIVE_SIZE||!size||(c&6)==6){result=-22;break;}
         if((d&3)!=1&&(d&3)!=2){result=-22;break;}if((d&1)&&!(d&32)){result=-95;break;}
@@ -844,7 +884,7 @@ static Frame *native_dispatch(Frame *f){
         else if(b==0x5410)tty->foreground=*(u32 *)buffer;
         else if(b==0x5413){u16 *size=buffer;size[0]=17;size[1]=73;size[2]=size[3]=0;}
         else if(b==0x541b)*(u32 *)buffer=tty->ready;else if(b==0x5424)*(u32 *)buffer=0;else result=-25;break;}
-    case 17:if(a>=NATIVE_FDS||p->fd[a].kind!=1){result=-9;break;}{void *out=c?native_buffer(current_task,b,c,1):0;result=c&&!out?-14:native_read(p->fd[a].index,d,out,c);}break;
+    case 17:if(a>=NATIVE_FDS||(p->fd[a].kind!=1&&p->fd[a].kind!=9)){result=-9;break;}{void *out=c?native_buffer(current_task,b,c,1):0;result=c&&!out?-14:p->fd[a].kind==9?native_device_read(p->fd[a].index,d,out,c):native_read(p->fd[a].index,d,out,c);}break;
     case 18:{if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}NativeFd *fd=&p->fd[a];
         if(fd->kind!=1){result=-29;break;}if(!(native_descriptions[fd->description].flags&3)){result=-9;break;}
         if((i64)d<0){result=-22;break;}void *in=c?native_buffer(current_task,b,c,0):0;
@@ -938,13 +978,14 @@ static Frame *native_dispatch(Frame *f){
     case 80:if(!native_user_path(a,path))result=-14;else{int index=native_find(path);if(index<0)result=-2;else if(NFILES[index].kind!=2)result=-20;else{for(int i=APP_FIRST;i<TASK_COUNT;i++)if(native_active[i]&&native_process[i].fs_owner==p->fs_owner)ns_copy(native_process[i].cwd,path);result=0;}}break;
     case 81:if(a>=NATIVE_FDS||p->fd[a].kind!=1)result=-9;else if(NFILES[p->fd[a].index].kind!=2)result=-20;else{for(int i=APP_FIRST;i<TASK_COUNT;i++)if(native_active[i]&&native_process[i].fs_owner==p->fs_owner)ns_copy(native_process[i].cwd,NFILES[p->fd[a].index].path);result=0;}break;
     case 83:case 258:result=native_at_path(n==258?(i64)a:-100,n==258?b:a,path);if(result)break;
+        if(aurorafs_path(path)){result=vfs_kind(path)>=0?-17:-1;break;} /* AuroraFS is flat */
         if(fat_ready&&fat_path(path)){FRESULT error=f_mkdir(fat_name(path));result=error?fat_error(error):0;break;}
         result=ext2_ready?-ext4_dir_mk(path):-38;if(!result)result=-ext4_mode_set(path,(n==258?c:b)&0777&~p->umask);break;
     case 84:result=native_user_path(a,path)?native_remove_directory(path):-14;break;
     case 86:case 265:{char target[256];if(n==265&&(e&~0x1400ULL)){result=-22;break;}
         result=native_at_path(n==86?-100:(i64)a,n==86?a:b,path);if(result)break;
         result=native_at_path(n==86?-100:(i64)c,n==86?b:d,target);if(result)break;
-        if(!ext2_ready||(fat_ready&&(fat_path(path)||fat_path(target)))){result=-95;break;}
+        if(native_foreign(path)!=native_foreign(target)){result=-18;break;}if(!ext2_ready||native_foreign(path)){result=-95;break;}
         char from[256],to[256];result=ext2_resolve(from,path,n==265&&(e&0x400));if(result)break;result=ext2_resolve(to,target,0);if(result)break;
         int kind=vfs_kind(from);if(kind<0){result=kind;break;}if(kind==2){result=-1;break;}
         int exists=vfs_kind(to);if(exists>=0){result=-17;break;}if(exists!=-2){result=exists;break;}
@@ -965,16 +1006,17 @@ static Frame *native_dispatch(Frame *f){
     case 73:if(a>=NATIVE_FDS||!p->fd[a].kind)result=-9;else{u64 op=b&~4ULL;result=op==1||op==2||op==8?0:-22;}break; /* single-owner volume: locks are advisory */
     case 82:case 264:case 316:{char target[256];result=native_at_path(n==82?-100:(i64)a,n==82?a:b,path);if(result)break;
         result=native_at_path(n==82?-100:(i64)c,n==82?b:d,target);if(result)break;
-        result=ext2_ready?vfs_rename(path,target,n==316?(u32)e:0):-38;break;}
+        result=ext2_ready||native_foreign(path)?vfs_rename(path,target,n==316?(u32)e:0):-38;break;}
     case 88:case 266:if(!ext2_ready)result=-38;else{char target[256];
         if(!native_string(a,target,sizeof(target))){result=-14;break;}
         result=native_at_path(n==266?(i64)b:-100,n==266?c:b,path);if(result)break;
-        if(fat_ready&&fat_path(path)){result=-95;break;}
+        if(native_foreign(path)){result=-95;break;}
         char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;
         int kind=vfs_kind(resolved);result=kind>=0?-17:kind!=-2?kind:-ext4_fsymlink(target,resolved);}break;
     case 87:case 263:{result=native_at_path(n==263?(i64)a:-100,n==263?b:a,path);if(result)break;
         if(n==263&&c){result=c==512?native_remove_directory(path):-22;break;}
-        if(ext2_ready&&!(fat_ready&&fat_path(path))){char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;uint32_t mode;result=-ext4_mode_get(resolved,&mode);if(result)break;
+        if(native_foreign(path))result=vfs_unlink(path); /* FAT and AuroraFS names park open files the same way */
+        else if(ext2_ready){char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;uint32_t mode;result=-ext4_mode_get(resolved,&mode);if(result)break;
             if((mode&0170000)==0040000){result=-21;break;}result=vfs_unlink(resolved);
         }else{int index=native_find(path);if(index<0)result=-2;else if(NFILES[index].kind==2)result=-21;else if(!native_writable(path))result=-30;else{NFILES[index].kind=0;result=native_commit(index)?0:-5;}}break;}
     case 89:if(!native_user_path(a,path))result=-14;else if(ns_equal(path,"/proc/self/exe")){u64 length=ns_length(p->exe);if(length>c)length=c;void *out=native_buffer(current_task,b,length,1);if(!out)result=-14;else{memcpy(out,p->exe,length);result=length;}}
@@ -984,12 +1026,28 @@ static Frame *native_dispatch(Frame *f){
         else if(n==90){if(!native_user_path(a,path)){result=-14;break;}index=native_find(path);}
         else index=a<NATIVE_FDS&&p->fd[a].kind==1?p->fd[a].index:-1;
         if(index<0){result=n==90?-2:-9;break;}if(!native_writable(NFILES[index].path)){result=-30;break;}
-        *(u32 *)NFILES[index].pad=mode&0777;*(u32 *)(NFILES[index].pad+4)=1;result=native_commit(index)?0:-5;break;}
+        *(u32 *)NFILES[index].pad=mode&07777;*(u32 *)(NFILES[index].pad+4)=1;result=native_commit(index)?0:-5;
+        if(!result&&ext2_ready&&!native_foreign(NFILES[index].path))ext4_ctime_set(NFILES[index].path,native_timestamp());break;}
     case 95:result=p->umask;for(int i=APP_FIRST;i<TASK_COUNT;i++)if(native_active[i]&&native_process[i].fs_owner==p->fs_owner)native_process[i].umask=(u32)a&0777;break;
-    case 92:case 93:case 94:{if((b!=1000&&b!=0xffffffffULL&&b!=~0ULL)||(c!=1000&&c!=0xffffffffULL&&c!=~0ULL)){result=-1;break;}
+    case 92:case 93:case 94:case 260:{
+        /* The single user is root-like: any owner may be recorded. lchown and
+           AT_SYMLINK_NOFOLLOW stop at the link itself. -1 keeps a field. */
+        u64 uid=n==260?c:b,gid=n==260?d:c;int nofollow=n==94||(n==260&&(e&256));if(n==260&&(e&~0x100ULL)){result=-22;break;}
         if(n==93){if(a>=NATIVE_FDS||p->fd[a].kind!=1){result=-9;break;}ns_copy(path,NFILES[p->fd[a].index].path);}
-        else if(!native_user_path(a,path)){result=-14;break;}int index=native_find(path);if(index<0){result=-2;break;}
-        result=ext2_ready&&!(fat_ready&&fat_path(path))?-ext4_owner_set(NFILES[index].path,1000,1000):0;break;}
+        else{result=n==260?native_at_path((i64)a,b,path):native_user_path(a,path)?0:-14;if(result)break;}
+        if(native_foreign(path)){result=native_find(path)<0?-2:0;break;}if(!ext2_ready){result=-38;break;}
+        char resolved[256];result=ext2_resolve(resolved,path,!nofollow);if(result)break;
+        uint32_t old_uid,old_gid;result=-ext4_owner_get(resolved,&old_uid,&old_gid);if(result)break;
+        if((u32)uid==0xffffffffU)uid=old_uid;if((u32)gid==0xffffffffU)gid=old_gid;
+        result=-ext4_owner_set(resolved,(u32)uid,(u32)gid);if(!result)result=-ext4_ctime_set(resolved,native_timestamp());break;}
+    case 132:case 235:case 261:{ /* utime / utimes / futimesat as utimensat */
+        u64 address=n==261?b:a,times_address=n==261?c:b;i64 dirfd=n==261?(i64)a:-100;
+        result=native_at_path(dirfd,address,path);if(result)break;int index=native_find(path);if(index<0){result=-2;break;}
+        if(!ext2_ready||native_foreign(path)){result=-95;break;}
+        u32 atime=native_timestamp(),mtime=atime;
+        if(times_address){u64 *times=native_buffer(current_task,times_address,n==132?16:32,0);if(!times){result=-14;break;}
+            if(n==132){atime=(u32)times[0];mtime=(u32)times[1];}else{if(times[1]>=1000000||times[3]>=1000000){result=-22;break;}atime=(u32)times[0];mtime=(u32)times[2];}}
+        result=-ext4_atime_set(NFILES[index].path,atime);if(!result)result=-ext4_mtime_set(NFILES[index].path,mtime);if(!result)result=-ext4_ctime_set(NFILES[index].path,native_timestamp());break;}
     case 97:case 302:{u64 target=n==97?b:d;u64 resource=n==97?a:b;if(resource>=16){result=-22;break;}
         if(n==302&&c&&!native_buffer(current_task,c,16,0)){result=-14;break;}
         if(target){u64 *out=native_buffer(current_task,target,16,1);if(!out){result=-14;break;}out[0]=out[1]=resource==3?0x200000:resource==7?NATIVE_FDS:~0ULL;}result=0;break;}
@@ -1020,11 +1078,12 @@ static Frame *native_dispatch(Frame *f){
     case 280:{int index;if(d&~256ULL){result=-22;break;}
         if(!b){if(a>=NATIVE_FDS||p->fd[a].kind!=1){result=-9;break;}index=p->fd[a].index;ns_copy(path,NFILES[index].path);}
         else{result=native_at_path((i64)a,b,path);if(result)break;index=native_find(path);if(index<0){result=-2;break;}}
-        if(!ext2_ready||fat_path(path)){result=-95;break;}u64 *times=c?native_buffer(current_task,c,32,0):0;if(c&&!times){result=-14;break;}
+        if(!ext2_ready||native_foreign(path)){result=-95;break;}u64 *times=c?native_buffer(current_task,c,32,0):0;if(c&&!times){result=-14;break;}
         if(times){int invalid=0;for(int i=0;i<4;i+=2)if(times[i+1]!=1073741823&&times[i+1]!=1073741822){if(times[i+1]>=1000000000)invalid=22;else if(times[i]>0xffffffffULL)invalid=75;}if(invalid){result=-invalid;break;}}
         u32 atime=native_timestamp(),mtime=atime;if(times){if(times[1]!=1073741823)atime=times[0];if(times[3]!=1073741823)mtime=times[2];}
         result=0;if(!times||times[1]!=1073741822)result=-ext4_atime_set(NFILES[index].path,atime);
-        if(!result&&(!times||times[3]!=1073741822))result=-ext4_mtime_set(NFILES[index].path,mtime);break;}
+        if(!result&&(!times||times[3]!=1073741822))result=-ext4_mtime_set(NFILES[index].path,mtime);
+        if(!result)result=-ext4_ctime_set(NFILES[index].path,native_timestamp());break;}
     case 273:if(b!=24)result=-22;else{p->robust_head=a;result=0;}break;
     case 274:{u64 id=a?a-100:current_task;
         if(id<APP_FIRST||id>=TASK_COUNT||!native_active[id]||tasks[id].state==DEAD){result=-3;break;}

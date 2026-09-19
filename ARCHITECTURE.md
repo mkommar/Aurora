@@ -62,7 +62,11 @@ acknowledgements still travel through the kernel.
 | `sdk/` | Application startup, linker script, C runtime and headers |
 | `apps/` | Separately compiled sample applications |
 | `src/native.h` | Native static GCC/musl ELF loader and syscall compatibility |
-| `src/native_fs.h` | Separate development-volume storage and pathname handling |
+| `src/native_fs.h` | Development-volume storage, pathname handling, the AuroraFS backend at `/aurorafs` and raw `/dev/disk`/`/dev/boot` devices |
+| `src/partitions.h` | Protective MBR and GPT discovery with backup-header recovery and repair |
+| `src/ext2_backend.h`, `src/fat_backend.h` | lwext4 and FatFs adapters; ext2 clean/in-use state, RTC-stamped FAT32 entries |
+| `src/vfs_operations.h` | Open-file tracking, rename/unlink parking of open files and crash-orphan reclaim |
+| `tools-source/fsck-aurora.c` | GPT, ext2, FAT32 and AuroraFS checker compiled by the in-Aurora GCC |
 
 User services are separate ELF binaries, not privileged kernel modules. Their
 flat images are embedded solely for boot transport and copied before starting
@@ -227,8 +231,15 @@ flushes while the caller sleeps under the filesystem mutex, a sequence number
 tags each command so a late interrupt cannot complete a newer one, and a tick
 deadline bounds every wait. Writes flush file data before updating/flushing
 metadata. They are not journaled or atomic across power loss.
-There are no directories, deletion, rename, per-file permissions or descriptors.
-All processes have shared filesystem access through validated whole-file APIs.
+There are no directories, per-file permissions or descriptors in the legacy
+API. Native processes see the same volume as `/aurorafs` with open, read,
+write, truncate, unlink, rename and directory listing; the legacy whole-file
+calls fall back to `/work` on the development volume when AuroraFS lacks a
+name, so both process kinds share one namespace. Native processes can also
+read the raw boot disk as `/dev/boot` and the development disk as `/dev/disk`,
+which is how `fsck-aurora` checks every volume from user space. See
+[FILESYSTEMS.md](FILESYSTEMS.md) for the unified namespace, metadata
+semantics, crash-orphan reclaim and GPT recovery.
 The application runtime supplies a fixed 128 KiB allocator, not kernel demand
 paging or a growable heap. See `sdk/README.md` for the executable/runtime contract.
 

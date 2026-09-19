@@ -20,6 +20,9 @@ DRESULT disk_ioctl(BYTE drive,BYTE command,void *buffer){
     if(command==GET_SECTOR_COUNT){*(LBA_t *)buffer=fat_partition_sectors;return RES_OK;}
     if(command==GET_BLOCK_SIZE){*(DWORD *)buffer=1;return RES_OK;}return RES_PARERR;
 }
+/* FatFs stamps modified objects with the RTC-derived clock (UTC as local). */
+DWORD get_fattime(void){u32 y,mo,d,h,mi,s;native_civil(native_timestamp(),&y,&mo,&d,&h,&mi,&s);if(y<1980)y=1980;return ((DWORD)(y-1980)<<25)|(mo<<21)|(d<<16)|(h<<11)|(mi<<5)|(s/2);}
+static u64 fat_epoch(WORD date,WORD time){return native_epoch(1980+(date>>9),(date>>5)&15?(date>>5)&15:1,date&31?date&31:1,time>>11,(time>>5)&63,(time&31)*2);}
 static int fat_error(FRESULT error){return error==FR_NO_FILE||error==FR_NO_PATH?-2:error==FR_EXIST?-17:error==FR_DENIED?-13:error==FR_INVALID_NAME?-22:error==FR_NOT_ENOUGH_CORE?-12:-5;}
 static void fat_init(void){if(fat_partition_base&&f_mount(&fat_volume,"",1)==FR_OK){fat_ready=1;serial("FAT32: exchange volume mounted at /exchange\r\n");}}
 static int fat_find(const char *path){

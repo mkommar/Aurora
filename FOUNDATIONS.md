@@ -37,9 +37,9 @@ continue to use AuroraFS on the boot disk through their original ABI.
 | --- | --- | --- |
 | Processes and syscalls | Fork/exec/wait, shared open descriptions, descriptor flags, pipes, basic signal handlers/masks/return, process groups, poll/select/pselect, musl pthreads/futexes, multicore and musl dynamic linking | Full POSIX signals, finer native kernel locks and comprehensive job control |
 | Memory | BIOS E820 discovery, allocated physical pages, reclamation on unmap/exit, growable brk/mmap, 512 MiB virtual spaces, copy-on-write fork and shared thread address spaces | Paging to disk, scalable page-table allocation and broader OOM testing |
-| Filesystem namespace | Directories, relative descriptors, symlinks, rename/replacement, deletion, modes, timestamps, directory enumeration | Unified legacy/native namespace, full ownership/access rules, crash orphan recovery |
+| Filesystem namespace | Directories, relative descriptors, symlinks, hard links with real link counts, rename/replacement, deletion, modes, stored owners, three timestamps, directory enumeration, one namespace for legacy and native processes (`/aurorafs`, `/work` fallback), crash orphan reclaim at mount | Permission enforcement across users, extended attributes |
 | Block I/O | PCI discovery, transitional VirtIO DMA queue with eight batched in-flight chains, MSI-X/MSI/INTx routing, interrupt-driven ATA (IRQ14) for the boot and development volumes, blocked callers, timeout and device flush | IOMMU, user-space storage service; only early boot still polls |
-| Disk formats | GPT CRC validation, MBR partition discovery, writable ext2 and FAT32, independent checker script | Backup GPT recovery, in-Aurora fsck, journaling/power-loss recovery |
+| Disk formats | GPT CRC validation with backup recovery and repair of the damaged copy, MBR partition discovery, writable ext2 and FAT32, ext2 clean/in-use superblock state, RTC-stamped FAT32 entries, read-only raw devices and `fsck-aurora` running inside Aurora | ext2 journaling or ordered writes, FAT32 dirty bit, repairing fsck mode |
 | Shell and TTY | GNU Bash, interactive stdin, canonical editing, echo, control keys, quoting, environment, redirection and pipelines | ANSI terminal emulation, Readline editing and complete terminal/job-control semantics |
 | Build tools | Pinned-source GNU bootstrap, existing native GCC/binutils, Make builds applications and itself inside Aurora | Rebuilding every package and GCC itself inside Aurora; broader configure compatibility |
 
@@ -55,9 +55,13 @@ separate user/kernel stacks, TLS, register state and signal masks. See
 Signal handlers nest through frames on the user or alternate stack, restore
 their mask through `rt_sigreturn`, and receive fault addresses; interval timers,
 `sigsuspend`/`sigtimedwait`/`sigqueue` and `WCONTINUED`/`waitid` work. See
-[PLATFORM.md](PLATFORM.md). The filesystem uses one synthetic user.
-Open ext2 files survive unlink through temporary orphan names; abrupt shutdown
-can leave those names behind. FAT32 has more limited Unix metadata semantics.
+[PLATFORM.md](PLATFORM.md). The filesystem stores owners but every process
+runs as one synthetic user, so ownership is not enforced. Open ext2 and FAT32
+files survive unlink through parked orphan names; the next mount reclaims any
+left behind by an abrupt shutdown, and the ext2 superblock records whether the
+previous session stopped cleanly. FAT32 has more limited Unix metadata
+semantics. See [FILESYSTEMS.md](FILESYSTEMS.md) for the namespace, recovery
+behaviour and the in-Aurora checker.
 
 Networking is not implemented in Aurora. Source archives are already in `/src`;
 downloading additional sources inside Aurora still requires a network stack,

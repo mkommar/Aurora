@@ -311,13 +311,14 @@ Frame *trap_dispatch(Frame *frame) {
         if((n>=41&&n<=55)||n==318||n==284||n==290)needs_fs=0;
         if(n==34||n==130||n==127||n==128||n==129||n==297||n==36||n==37||n==38||n==100||(n>=140&&n<=148)||n==157||n==160||n==324||n==13||n==14)needs_fs=0;
         if((n==0||n==1||n==3||n==5||n==16||n==19||n==20||n==72)&&frame->rdi<NATIVE_FDS&&native_process[current_task].fd[frame->rdi].kind>=6)needs_fs=0;
-        if(needs_fs)filesystem_enter();Frame *next=native_dispatch(frame);if(needs_fs)filesystem_leave();return next;
+        if(needs_fs)filesystem_enter();if(ext2_clean&&native_mutates(frame))ext2_dirty();Frame *next=native_dispatch(frame);if(needs_fs)filesystem_leave();return next;
     }
     /* Legacy AuroraFS calls also sleep in interrupt-driven ATA now, so they
        share the filesystem mutex and its kernel continuation. */
     int fs_call=frame->rax==SYS_NATIVE_SPAWN||frame->rax==SYS_NATIVE_READ||frame->rax==SYS_NATIVE_WRITE||frame->rax==SYS_NATIVE_LIST||frame->rax==SYS_SYNC
-        ||frame->rax==SYS_FILE_READ||frame->rax==SYS_FILE_WRITE||frame->rax==SYS_SPAWN;
+        ||frame->rax==SYS_FILE_READ||frame->rax==SYS_FILE_WRITE||frame->rax==SYS_FILE_LIST||frame->rax==SYS_SPAWN;
     if(fs_call)filesystem_enter();
+    if(frame->rax==SYS_FILE_WRITE||frame->rax==SYS_NATIVE_WRITE)ext2_dirty();
     i64 result=0;int reschedule=0;
     switch(frame->rax) {
     case SYS_YIELD: reschedule=1;break;
@@ -341,8 +342,8 @@ Frame *trap_dispatch(Frame *frame) {
     case SYS_FILE_LIST: {
         FileEntry *entry=user_buffer(current_task,frame->rsi,sizeof(FileEntry),1);
         if(!entry)result=ERR_POINTER;
-        else if(!fs_ready)result=ERR_IO;
-        else if(frame->rdi>=FS_FILES)result=ERR_LIMIT;
+        else if(frame->rdi>=FS_FILES)result=native_ready?native_shell_list(frame->rdi-FS_FILES,frame->rsi):ERR_LIMIT; /* then /work */
+        else if(!fs_ready){if(native_ready){memset(entry,0,sizeof(*entry));result=0;}else result=ERR_IO;}
         else {*entry=directory[frame->rdi];result=0;}
         break;
     }
@@ -384,7 +385,7 @@ void kernel_main(void) {
     native_clock_init();
     virtio_block_init();
     filesystem_init();
-    native_fs_init();
+    native_fs_init();vfs_reclaim_orphans();
     u64 fb=*(volatile u32 *)0x928;
     if(fb<0x80000000||fb+SURFACE_BYTES>0x100000000ULL||*(volatile u16 *)0x910!=4096)panic("Unsupported framebuffer layout");
     radeon_init();
