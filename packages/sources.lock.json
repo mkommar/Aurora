@@ -1,0 +1,410 @@
+{
+  "schema": 1,
+  "trust": "SHA-256 pins acquired over HTTPS; upstream signatures have not been verified. License identifiers summarize the main project; install the upstream license files with each binary package.",
+  "packages": {
+    "patch": {
+      "version": "2.7.6",
+      "archive": "patch-2.7.6.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/patch/patch-2.7.6.tar.gz",
+      "sha256": "8cf86e00ad3aaa6d26aca30640e86b0e3e1f395ed99f189b06d4c9f74bc58a4e",
+      "license": "GPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "m4": {
+      "version": "1.4.19",
+      "archive": "m4-1.4.19.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/m4/m4-1.4.19.tar.gz",
+      "sha256": "3be4a26d825ffdfda52a56fc43246456989a3630093cced3fbddf4771ee58a70",
+      "license": "GPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "autoconf": {
+      "version": "2.71",
+      "archive": "autoconf-2.71.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz",
+      "sha256": "431075ad0bf529ef13cb41e9042c542381103e80015686222b8a9d4abef42a1c",
+      "license": "GPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "m4",
+        "perl"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "automake": {
+      "version": "1.16.5",
+      "archive": "automake-1.16.5.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/automake/automake-1.16.5.tar.gz",
+      "sha256": "07bd24ad08a64bc17250ce09ec56e921d6343903943e99ccf63bbf0705e34605",
+      "license": "GPL-2.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "autoconf",
+        "perl"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "libtool": {
+      "version": "2.4.7",
+      "archive": "libtool-2.4.7.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/libtool/libtool-2.4.7.tar.gz",
+      "sha256": "04e96c2404ea70c590c546eba4202a4e12722c640016c12b9b2f1ce3d481e9a8",
+      "license": "GPL-2.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "m4"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "bison": {
+      "version": "3.8.2",
+      "archive": "bison-3.8.2.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/bison/bison-3.8.2.tar.gz",
+      "sha256": "06c9e13bdf7eb24d4ceb6b59205a4f67c2c7e7213119644430fe82fbd14a0abb",
+      "license": "GPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "m4"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "flex": {
+      "version": "2.6.4",
+      "archive": "flex-2.6.4.tar.gz",
+      "url": "https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz",
+      "sha256": "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995",
+      "license": "BSD-2-Clause",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "m4",
+        "bison"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "perl": {
+      "version": "5.40.2",
+      "archive": "perl-5.40.2.tar.gz",
+      "url": "https://www.cpan.org/src/5.0/perl-5.40.2.tar.gz",
+      "sha256": "10d4647cfbb543a7f9ae3e5f6851ec49305232ea7621aed24c7cfbb0bef4b70d",
+      "license": "Artistic-1.0-Perl OR GPL-1.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip"
+      ],
+      "patches": [],
+      "recipe": "perl"
+    },
+    "xz": {
+      "version": "5.8.1",
+      "archive": "xz-5.8.1.tar.gz",
+      "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.gz",
+      "sha256": "507825b599356c10dca1cd720c9d0d0c9d5400b9de300af00e4d1ea150795543",
+      "license": "0BSD AND LGPL-2.1-or-later AND GPL-2.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "dpkg": {
+      "version": "1.22.22",
+      "archive": "dpkg_1.22.22.tar.xz",
+      "url": "https://deb.debian.org/debian/pool/main/d/dpkg/dpkg_1.22.22.tar.xz",
+      "sha256": "d5ea9f132deec8030b50ab2a02ade2b49f0c7a195805a302c8301156fe833a57",
+      "license": "GPL-2.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "xz",
+        "perl",
+        "libmd",
+        "bootstrap-g++"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "make": {
+      "version": "4.4.1",
+      "archive": "make-4.4.1.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz",
+      "sha256": "dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3",
+      "license": "GPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "bash": {
+      "version": "5.2.37",
+      "archive": "bash-5.2.37.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/bash/bash-5.2.37.tar.gz",
+      "sha256": "9599b22ecd1d5787ad7d3b7bf0c59f312b3396d1e281175dd1f8a4014da621ff",
+      "license": "GPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "diffutils": {
+      "version": "3.10",
+      "archive": "diffutils-3.10.tar.xz",
+      "url": "https://ftp.gnu.org/gnu/diffutils/diffutils-3.10.tar.xz",
+      "sha256": "90e5e93cc724e4ebe12ede80df1634063c7a855692685919bfe60b556c9bd09e",
+      "license": "GPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "xz"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "libmd": {
+      "version": "1.1.0",
+      "archive": "libmd-1.1.0.tar.xz",
+      "url": "https://libbsd.freedesktop.org/releases/libmd-1.1.0.tar.xz",
+      "sha256": "1bd6aa42275313af3141c7cf2e5b964e8b1fd488025caf2f971f43b00776b332",
+      "license": "BSD-3-Clause AND BSD-2-Clause AND ISC",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "xz"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "python": {
+      "version": "3.12.10",
+      "archive": "Python-3.12.10.tgz",
+      "url": "https://www.python.org/ftp/python/3.12.10/Python-3.12.10.tgz",
+      "sha256": "15d9c623abfd2165fe816ea1fb385d6ed8cf3c664661ab357f1782e3036a6dac",
+      "license": "Python-2.0",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "zlib",
+        "bzip2",
+        "xz"
+      ],
+      "patches": [],
+      "recipe": "python"
+    },
+    "zlib": {
+      "version": "1.3.1",
+      "archive": "zlib-1.3.1.tar.gz",
+      "url": "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+      "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+      "license": "Zlib",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip"
+      ],
+      "patches": [],
+      "recipe": "zlib"
+    },
+    "bzip2": {
+      "version": "1.0.8",
+      "archive": "bzip2-1.0.8.tar.gz",
+      "url": "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz",
+      "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+      "license": "bzip2-1.0.6",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip"
+      ],
+      "patches": [],
+      "recipe": "bzip2"
+    },
+    "binutils": {
+      "version": "2.43.1",
+      "archive": "binutils-2.43.1.tar.xz",
+      "url": "https://ftp.gnu.org/gnu/binutils/binutils-2.43.1.tar.xz",
+      "sha256": "13f74202a3c4c51118b797a39ea4200d3f6cfbe224da6d1d95bb938480132dfd",
+      "license": "GPL-3.0-or-later AND LGPL-2.1-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "xz",
+        "zlib"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "gmp": {
+      "version": "6.3.0",
+      "archive": "gmp-6.3.0.tar.xz",
+      "url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+      "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+      "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "xz"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "mpfr": {
+      "version": "4.2.2",
+      "archive": "mpfr-4.2.2.tar.xz",
+      "url": "https://ftp.gnu.org/gnu/mpfr/mpfr-4.2.2.tar.xz",
+      "sha256": "b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01",
+      "license": "LGPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "xz",
+        "gmp"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "mpc": {
+      "version": "1.3.1",
+      "archive": "mpc-1.3.1.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/mpc/mpc-1.3.1.tar.gz",
+      "sha256": "ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8",
+      "license": "LGPL-3.0-or-later",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "gmp",
+        "mpfr"
+      ],
+      "patches": [],
+      "recipe": "autotools"
+    },
+    "gcc": {
+      "version": "11.5.0",
+      "archive": "gcc-11.5.0.tar.xz",
+      "url": "https://ftp.gnu.org/gnu/gcc/gcc-11.5.0/gcc-11.5.0.tar.xz",
+      "sha256": "a6e21868ead545cf87f0c01f84276e4b5281d672098591c1c896241f09363478",
+      "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bash",
+        "make",
+        "coreutils",
+        "tar",
+        "gzip",
+        "xz",
+        "binutils",
+        "gmp",
+        "mpfr",
+        "mpc",
+        "bootstrap-g++"
+      ],
+      "patches": [],
+      "recipe": "gcc"
+    }
+  }
+}

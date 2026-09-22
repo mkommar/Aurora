@@ -129,6 +129,9 @@ static void native_memory_init(void){
         if(start<NATIVE_PAGE_FIRST)start=NATIVE_PAGE_FIRST;
         start=(start+4095)&~4095ULL;end&=~4095ULL;
         for(u64 address=start;address<end;address+=4096){u64 page=(address-NATIVE_PAGE_FIRST)/4096;
+            /* This virtual window maps guarded kernel stacks, not the RAM at
+             * the same physical address. Allocator copies use identity VAs. */
+            if(address>=EXTENDED_STACKS&&address<EXTENDED_STACKS+0x200000ULL)continue;
             if(NATIVE_PAGE_BITMAP[page/8]&(1U<<(page%8))){NATIVE_PAGE_BITMAP[page/8]&=~(1U<<(page%8));native_free_pages++;}}
     }
     for(int i=0;i<16;i++)((u64 *)0x201000)[4+i]=(0x08700000ULL+i*4096)|3;
@@ -433,6 +436,34 @@ static void native_defaults(u32 id){
 }
 #include "native_elf.h"
 static i64 native_exec(u32 id,int index){
+    /* Resolve scripts before replacing the address space. The optional shebang
+     * argument is one string (including embedded spaces), as on Linux. */
+    for(int depth=0;;depth++){
+        if(NFILES[index].kind!=1)return -13;
+        if(*(u32 *)(NFILES[index].pad+4)&&!(*(u32 *)NFILES[index].pad&0100))return -13;
+        char line[256];u64 length=NFILES[index].size;if(length>255)length=255;
+        if(native_read(index,0,line,length)!=(i64)length)return -5;
+        if(length<2||line[0]!='#'||line[1]!='!')break;
+        if(depth==4)return -40;
+        u64 end=2;while(end<length&&line[end]!='\n'&&line[end])end++;
+        if(end==255)return -8;
+        line[end]=0;while(end>2&&(line[end-1]==' '||line[end-1]=='\t'))line[--end]=0;
+        char *name=line+2;while(*name==' '||*name=='\t')name++;
+        if(!*name)return -8;
+        char *option=name;while(*option&&*option!=' '&&*option!='\t')option++;
+        if(*option){*option++=0;while(*option==' '||*option=='\t')option++;}
+        char resolved[256];if(!native_path(resolved,native_process[id].cwd,name))return -36;
+        int next=native_find(resolved);if(next<0)return -2;
+        u64 used=0;for(int i=0;i<exec_argc;i++){u64 endarg=(u64)(exec_args[i]-exec_strings)+ns_length(exec_args[i])+1;if(endarg>used)used=endarg;}
+        int skip=exec_argc?1:0,extra=*option?3:2,count=exec_argc-skip+extra;
+        u64 needed=ns_length(name)+1+ns_length(NFILES[index].path)+1+(*option?ns_length(option)+1:0);
+        if(count>NATIVE_EXEC_ARGS||used>NATIVE_EXEC_BYTES||needed>NATIVE_EXEC_BYTES-used)return -7;
+        for(int i=exec_argc-1;i>=skip;i--)exec_args[i-skip+extra]=exec_args[i];
+        exec_args[0]=exec_strings+used;ns_copy(exec_args[0],name);used+=ns_length(name)+1;
+        if(*option){exec_args[1]=exec_strings+used;ns_copy(exec_args[1],option);used+=ns_length(option)+1;}
+        exec_args[extra-1]=exec_strings+used;ns_copy(exec_args[extra-1],NFILES[index].path);
+        exec_argc=count;index=next;
+    }
     if(native_vm_attached[id]&&native_vm_refs[native_space(id)]>1&&native_process[id].vfork_parent<0)return -16;
     if(*(u32 *)(NFILES[index].pad+4)&&!(*(u32 *)NFILES[index].pad&0100))return -13;
     NativeElf main,interpreter;char interp[256];

@@ -1,8 +1,9 @@
+param([string]$Output = 'build/image-tool')
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 $llvm = 'C:\Program Files\Unity\Hub\Editor\6000.4.0f1\Editor\Data\PlaybackEngines\AndroidPlayer\NDK\toolchains\llvm\prebuilt\windows-x86_64\bin'
 $ext4 = 'third_party/lwext4-58bcf89a121b72d4fb66334f1693d3b30e4cb9c5'
-$out = 'build/image-tool'
+$out = $Output
 New-Item -ItemType Directory -Force $out | Out-Null
 @'
 LIBRARY msvcrt.dll
