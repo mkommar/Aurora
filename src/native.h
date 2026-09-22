@@ -51,6 +51,7 @@ static void native_thread_exit(u32 id);
 static void native_mark_group(u32 id,i64 code);
 static u8 native_reap[TASK_COUNT];
 #include "vfs_operations.h"
+#include "native_cache.h"
 typedef struct {u8 termios[36],input[4096];u32 size,ready,eof,foreground,root;} NativeTty;
 #define NATIVE_TTY ((NativeTty *)0x0c200000)
 typedef struct {u64 handler,flags,restorer,mask;} NativeSigaction;
@@ -304,9 +305,13 @@ static i64 native_mremap(u32 id,u64 old_address,u64 old_size,u64 new_size,u64 fl
     if(!native_map_pages(id,target+old_size,new_size-old_size,attributes&(WRITE|NX|NATIVE_SHARED),1))return -12;
     return target;
 }
+#include "native_locks.h"
 static int native_close(u32 id,int fd){
     NativeFd *f=&native_process[id].fd[fd];
     int file_index=f->kind==1?f->index:-1;
+    if(file_index>=0){u64 key=*(u32 *)(NFILES[file_index].pad+16);
+        if(key&&ext2_ready&&!native_foreign(NFILES[file_index].path))native_lock_release(key,native_process[id].tgid,1);}
+    if(f->description&&native_descriptions[f->description].refs==1)native_lock_release(0,f->description,2);
     if(f->description&&native_descriptions[f->description].refs)native_descriptions[f->description].refs--;
     if(f->kind==6&&!native_descriptions[f->description].refs)network_close(f->index);
     if(f->kind==2&&native_pipes[f->index].readers)native_pipes[f->index].readers--;
@@ -358,6 +363,7 @@ static void native_finish(u32 id,i64 code){
     tasks[id].state=DEAD;exit_codes[id]=code;
     u32 leader=p->tgid>=100?p->tgid-100:id;
     if(leader<TASK_COUNT&&native_group_refs[leader]&&!--native_group_refs[leader]){
+        native_lock_release(0,p->tgid,1);
         exit_codes[leader]=code;native_process[leader].timer_deadline[0]=native_process[leader].timer_deadline[1]=native_process[leader].timer_deadline[2]=0;
         native_notify_parent(leader,code<0?2:1,code<0?(code<=-128?11:(int)-code):(int)code&255);}
     if(leader<TASK_COUNT&&!native_group_refs[leader])for(u32 child=APP_FIRST;child<TASK_COUNT;child++)if(native_active[child]&&native_process[child].parent==(int)leader)native_process[child].parent=-1;
@@ -623,12 +629,14 @@ static i64 native_open(const char *path,u32 flags,u32 mode){
         /* Raw devices are read-only: checkers inspect volumes the kernel has mounted. */
         if(device?!fs_ready:!native_ready)return -19;if(flags&3)return -13;int description=native_description(flags);if(!description)return -23;
         p->fd[fd]=(NativeFd){.kind=9,.index=device,.description=description,.flags=flags&0x80000U};return fd;}
-    int index=native_find(path);
-    if(index<0){if(!(flags&64))return -2;index=native_create(path);if(index<0)return index;
+    int index=native_find(path),created=0;
+    if(index<0){if(index!=-1&&index!=-2)return index;if(!(flags&64))return -2;index=native_create(path);if(index<0)return index;created=1;
         *(u32 *)NFILES[index].pad=mode&0777&~p->umask;*(u32 *)(NFILES[index].pad+4)=1;if(!native_commit(index))return -5;}
     else if((flags&192)==192)return -17;
     u32 permissions=*(u32 *)(NFILES[index].pad+4)?*(u32 *)NFILES[index].pad:0755;
-    if(((flags&3)!=1&&!(permissions&0400))||((flags&3)&&!(permissions&0200)))return -13;
+    /* The descriptor that creates a file gets its requested access even when
+     * the new mode is read-only (tar uses this when restoring archive modes). */
+    if(!created&&(((flags&3)!=1&&!(permissions&0400))||((flags&3)&&!(permissions&0200))))return -13;
     if((flags&0x10000)&&NFILES[index].kind!=2)return -20;
     if(NFILES[index].kind==2&&(flags&3))return -21;
     if((flags&3)&&!native_writable(path)&&!ns_equal(path,"/dev/null"))return -30;
@@ -751,7 +759,7 @@ static i64 native_fork(Frame *frame,int vfork,u64 child_stack){
     if(vfork)tasks[parent].state=3;return id+100;
 }
 static i64 native_exec_call(u64 path_address,u64 argv_address,u64 env_address){
-    char path[256];if(!native_user_path(path_address,path))return -14;int index=native_find(path);if(index<0)return -2;
+    char path[256];if(!native_user_path(path_address,path))return -14;int index=native_find(path);if(index<0)return index==-1?-2:index;
     exec_argc=exec_envc=0;
     u64 used=0;
     for(int i=0;;i++){u64 *a=native_buffer(current_task,argv_address+i*8,8,0);if(!a)return -14;if(!*a)break;
@@ -764,6 +772,7 @@ static i64 native_exec_call(u64 path_address,u64 argv_address,u64 env_address){
 }
 static i64 native_sync(void){int error=ext2_ready?ext2_sync():0;if(error)return -error;if(native_ready&&!native_disk_flush())return -5;return !fs_ready||disk_flush()?0:-5;}
 #include "native_wait.h"
+#include "native_lock_calls.h"
 #include "native_network.h"
 #include "native_threads.h"
 static void native_mark_group(u32 id,i64 code){
@@ -996,6 +1005,7 @@ static Frame *native_dispatch(Frame *f){
         else if(b==2){p->fd[a].flags=(p->fd[a].flags&~0x80000U)|((c&1)?0x80000:0);result=0;}
         else if(b==3)result=native_descriptions[p->fd[a].description].flags;
         else if(b==4){NativeDescription *of=&native_descriptions[p->fd[a].description];of->flags=(of->flags&~0xc00U)|(c&0xc00);result=0;}
+        else if(b==5||b==6||b==7)result=native_lock_call(72,a,b,c);
         else if(b==1031||b==1032){if(p->fd[a].kind!=2&&p->fd[a].kind!=3)result=-22;else result=b==1031&&c>NATIVE_PIPE_CAPACITY?-1:NATIVE_PIPE_CAPACITY;}
         else if(b==0||b==1030){if(c>=NATIVE_FDS){result=-22;break;}int fd;
             for(fd=(int)c;fd<NATIVE_FDS&&p->fd[fd].kind;fd++){}if(fd==NATIVE_FDS){result=-24;break;}
@@ -1034,7 +1044,7 @@ static Frame *native_dispatch(Frame *f){
         if(fat){DWORD clusters=0;FATFS *fs;if(f_getfree(fat_name(path),&clusters,&fs)==FR_OK){out[1]=out[9]=(u64)fs->csize*512;out[2]=fs->n_fatent-2;out[3]=out[4]=clusters;}}
         else if(ext2_ready){struct ext4_mount_stats stats;if(!ext4_mount_point_stats("/",&stats)){out[1]=out[9]=stats.block_size;out[2]=stats.blocks_count;out[3]=out[4]=stats.free_blocks_count;out[5]=stats.inodes_count;out[6]=stats.free_inodes_count;}}
         result=0;break;}
-    case 73:if(a>=NATIVE_FDS||!p->fd[a].kind)result=-9;else{u64 op=b&~4ULL;result=op==1||op==2||op==8?0:-22;}break; /* single-owner volume: locks are advisory */
+    case 73:result=native_lock_call(73,a,b,0);break;
     case 82:case 264:case 316:{char target[256];result=native_at_path(n==82?-100:(i64)a,n==82?a:b,path);if(result)break;
         result=native_at_path(n==82?-100:(i64)c,n==82?b:d,target);if(result)break;
         result=ext2_ready||native_foreign(path)?vfs_rename(path,target,n==316?(u32)e:0):-38;break;}

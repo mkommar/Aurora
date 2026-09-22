@@ -70,7 +70,7 @@ static int ext2_find(const char *path){
     if(index==NATIVE_FILE_CACHE)return -28;if(index==native_count)native_count++;
     NativeFile *f=&NFILES[index];memset(f,0,sizeof(*f));ns_copy(f->path,path);f->kind=(mode&0170000)==0040000?2:(mode&0170000)==0120000?3:1;
     *(u32 *)f->pad=mode&07777;*(u32 *)(f->pad+4)=1;
-    if((mode&0170000)==0100000){ext4_file file;error=ext4_fopen(&file,path,"r");if(error){f->kind=0;return -error;}f->size=ext4_fsize(&file);ext4_fclose(&file);}
+    if((mode&0170000)==0100000){ext4_file file;error=ext4_fopen(&file,path,"r");if(error){f->kind=0;return -error;}f->size=ext4_fsize(&file);*(u32 *)(f->pad+16)=file.inode;ext4_fclose(&file);}
     if(f->kind==3){char target[256];size_t size=0;error=ext4_readlink(path,target,sizeof(target),&size);if(error){f->kind=0;return -error;}f->size=size;}
     return (int)index;
 }

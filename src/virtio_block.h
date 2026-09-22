@@ -50,19 +50,7 @@ static void virtio_block_init(void){
         serial("VIRTIO: PCI block queue ready sectors=");hex(virtio_sectors);serial(" slots=");hex(virtio_slots);serial(virtio_message_mode==2?" MSI-X\r\n":virtio_message_mode?" MSI\r\n":" INTx\r\n");return;
     }
 }
-static void virtio_interrupt(u32 irq){
-    if(!virtio_ready||(virtio_message_mode?irq!=48:irq!=virtio_irq_line))return;
-    if(!virtio_message_mode){u8 status=inb(virtio_port+19);if(!(status&1))return;}virtio_interrupts++;
-    /* Wake the caller only once every chain of its batch has been used. */
-    volatile u16 *used=(volatile u16 *)((VIRTIO_RING+16*virtio_queue_size+6+2*virtio_queue_size+4095)&~4095ULL);
-    if(virtio_waiter>=0&&(u16)(used[1]-virtio_used)>=virtio_expected){tasks[virtio_waiter].state=RUNNABLE;virtio_waiter=-1;}
-}
-static void virtio_timeout(void){
-    if(virtio_waiter>=0&&timer_ticks>=virtio_deadline){
-        outb(virtio_port+18,0);virtio_ready=0;virtio_timeouts++;
-        tasks[virtio_waiter].state=RUNNABLE;virtio_waiter=-1;
-    }
-}
+#include "virtio_completion.h"
 static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
     if(!virtio_ready||count>virtio_slots*VIRTIO_SLOT_SECTORS||sector>virtio_sectors||count>virtio_sectors-sector)return 0;
     if(operation==4&&!(virtio_features&(1U<<9)))return 0;
@@ -86,7 +74,10 @@ static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
     virtio_requests++;virtio_batched_requests+=chains;if(chains>1)virtio_batches++;if(chains>virtio_max_batch)virtio_max_batch=chains;
     if(kernel_started&&(virtio_message_mode||(virtio_irq_line>0&&virtio_irq_line<16))){
         virtio_expected=chains;
-        while((u16)(used[1]-virtio_used)<chains&&virtio_ready){virtio_waiter=current_task;virtio_deadline=timer_ticks+200+chains*50;
+        /* Host-backed disks can stall during flushes and concurrent image I/O.
+         * Keep a bounded watchdog, but allow 30 seconds at the 100 Hz PIT. */
+        virtio_deadline=timer_ticks+3000+chains*50;
+        while((u16)(used[1]-virtio_used)<chains&&virtio_ready){virtio_waiter=current_task;
             tasks[current_task].state=WAIT_IO;virtio_suspensions++;kernel_suspend();}
         if(!virtio_ready)return 0;
     }else{

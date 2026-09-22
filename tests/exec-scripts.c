@@ -43,6 +43,11 @@ int main(int argc,char **argv) {
     char longline[300];memset(longline,'x',sizeof(longline));longline[0]='#';longline[1]='!';longline[298]='\n';longline[299]=0;
     script("/work/script-long",longline,0755);
     require(run("/work/script-long",args,ENOEXEC)==0,"truncated interpreter ENOEXEC");
+    int readonly=open("/work/create-readonly",O_WRONLY|O_CREAT|O_EXCL,0444);
+    require(readonly>=0 && write(readonly,"ok",2)==2 && close(readonly)==0,"create and populate read-only file");
+    errno=0;require(open("/work/create-readonly",O_WRONLY)==-1 && errno==EACCES,"reopen read-only file denies writes");
+    readonly=open("/work/create-readonly",O_RDONLY);char saved[2];struct stat metadata;
+    require(readonly>=0 && read(readonly,saved,2)==2 && !memcmp(saved,"ok",2) && !fstat(readonly,&metadata) && (metadata.st_mode&0777)==0444 && !close(readonly),"read-only creation preserves contents and mode");
     /* Cycle beyond the entire physical allocator pool, including the virtual
      * window reserved for kernel stacks. Concurrent resident memory stays low. */
     for(int round=0;round<5;round++) {

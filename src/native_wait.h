@@ -2,7 +2,7 @@
  * The native state lock serializes enqueue/check/wake across CPUs; the
  * filesystem mutex is not required by wait-queue operations. */
 /* Kinds: 1 descriptor, 2 wait4, 3 poll, 4 select, 5 sleep, 6 futex,
- * 7 pause/sigsuspend, 8 sigtimedwait. rip identifies the blocked syscall so a
+ * 7 pause/sigsuspend, 8 sigtimedwait, 9 whole-file lock. rip identifies the blocked syscall so a
  * handler issuing the same call from elsewhere does not consume the wait. */
 typedef struct {int kind,interrupted,awoken,mask_changed;u64 syscall,deadline,address,count,extra[3],oldmask,key,bits,rip;} NativeWait;
 static NativeWait native_waits[TASK_COUNT];
@@ -111,6 +111,7 @@ static void native_wake_waiters(void){
         if(w->kind==1)ready|=(native_readiness(id,(int)w->address)&(w->count|8|16|32))!=0;
         if(w->kind==2)for(int child=APP_FIRST;child<TASK_COUNT;child++)if(native_active[child]&&!native_process[child].thread&&native_process[child].parent==(int)native_process[id].tgid-100&&((tasks[child].state==DEAD&&!native_group_refs[child])||(tasks[child].state==STOPPED&&native_process[child].stopped_signal&&(w->count&2))||(native_process[child].continued&&(w->count&8))))ready=1;
         if(w->kind==8&&(native_signals(id)->pending&w->bits))ready=1;
+        if(w->kind==9)ready|=!native_lock_conflict(w->key,(u32)w->count,(u32)w->extra[0],(u32)w->extra[1]);
         if(w->kind==3)ready|=native_poll_scan(id,w->address,w->count,0)!=0;
         if(w->kind==4)ready|=native_select_scan(id,w,0)!=0;
         /* A wait whose condition is already satisfied completes normally even
@@ -119,7 +120,7 @@ static void native_wake_waiters(void){
         if(!ready){u64 pending=native_signals(id)->pending&~native_process[id].sigmask;
             for(int sig=1;sig<=64;sig++)if(pending&(1ULL<<(sig-1))){NativeSigaction *action=&native_actions(id)[sig];
                 if(action->handler==1||(!action->handler&&(sig==17||sig==18||sig==23||sig==28)))continue;
-                w->interrupted=!(w->kind<=2&&(action->flags&0x10000000));ready=1;break;}}
+                w->interrupted=!((w->kind<=2||w->kind==9)&&(action->flags&0x10000000));ready=1;break;}}
         if(ready){tasks[id].state=RUNNABLE;native_wait_wakes++;}
     }
 }

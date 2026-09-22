@@ -2,7 +2,7 @@
 Reads reject writes; callers stage writes onto copies. Never formats a disk.
 """
 import ctypes as C,struct,zlib,os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 def geometry(disk, lib):
     disk.seek(512);header=bytearray(disk.read(512));assert header[:8]==b'EFI PART'
@@ -51,6 +51,7 @@ def put_ext2_files(image,files):
     lib=C.CDLL(str(Path(os.environ.get('AURORA_IMAGE_TOOL','build/image-tool/ext2-image.dll')).resolve()))
     callback_type=C.CFUNCTYPE(C.c_int,C.c_void_p,C.c_uint64,C.c_uint32,C.c_int)
     lib.au_attach.argtypes=[callback_type];lib.au_put.argtypes=[C.c_char_p,C.c_void_p,C.c_uint64,C.c_uint32]
+    lib.au_mkdir.argtypes=[C.c_char_p]
     def check(result):
         if result:raise RuntimeError(f'ext2 image error {result}')
     with Path(image).open('r+b') as disk:
@@ -70,7 +71,16 @@ def put_ext2_files(image,files):
             except Exception:return 5
         lib.au_attach(transfer);check(lib.au_mount())
         try:
+            directories={'/'}
             for path,data in files.items():
+                canonical=PurePosixPath(path)
+                if not canonical.is_absolute() or '..' in canonical.parts:raise ValueError('Expected an absolute canonical path')
+                for parent in reversed(canonical.parents):
+                    name=str(parent)
+                    if name not in directories:
+                        error=lib.au_mkdir(name.encode())
+                        if error not in (0,17):raise RuntimeError(f'ext2 mkdir {name}: error {error}')
+                        directories.add(name)
                 executable=path.endswith('.sh') or path in ('/bin/curl','/work/rebuild-network.sh')
                 error=lib.au_put(path.encode(),data,len(data),0o755 if executable else 0o644)
                 if error:raise RuntimeError(f'ext2 image write {path}: error {error}')

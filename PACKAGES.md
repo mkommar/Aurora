@@ -1,0 +1,126 @@
+# Native GNU builds and Debian-format packages
+
+This work is in progress. A source lock and native build runner are implemented;
+they do not mean that all listed packages have been ported. The installed C
+compiler remains the bootstrap GCC. Upstream dpkg and APT are not yet installed,
+and package removal, dependency resolution and rollback are not yet demonstrated.
+
+## Build inputs and execution
+
+`packages/sources.lock.json` pins 23 source archives, versions, HTTPS locations,
+SHA-256 hashes, build dependencies, patch lists and main-project license
+identifiers. Hashes were acquired over HTTPS; upstream signatures have not been
+verified. License identifiers are summaries: redistributed packages must retain
+the complete upstream notices and exceptions.
+
+`native-packages.py` stages the lock and reviewed recipes, not source archives
+or configure output. `packages/build.sh` downloads through Aurora's curl,
+verifies the source hash, unpacks into a fresh build directory and invokes the
+upstream configure script under Aurora's Bash. It retains logs, uses `DESTDIR`,
+and has recipes for creating real Debian binary archives with `ar`, `tar` and
+`gzip`. No host compiler or Linux kernel executes the package build.
+
+The `.deb` recipe records source and recipe hashes, copies license files and the
+source lock, and includes a file list and SHA-256 manifest. Sorted tar entries,
+fixed archive timestamps, deterministic `ar` mode and `gzip -n` remove variable
+archive metadata. Bit-for-bit reproducibility of successive package builds
+still needs testing. Build dependencies are recorded; runtime dependencies need
+to be audited per package before release. This runner is not a dependency solver.
+
+Local patches are SHA-256 pinned, verified before staging and again in Aurora,
+applied with GNU patch, and copied into the package's documentation. The musl
+entry records the existing fork-child TID-registration backport; the new musl
+package recipe has not yet completed its validation run.
+
+Candidate packages use `/opt/aurora` and `musl-linux-amd64`, separate from the
+bootstrap tools. Stock Debian glibc packages are not compatible with this image.
+The initial archive writer bootstraps the `.deb` format; ownership databases,
+dependency checks and removal should use upstream dpkg once its native port is
+validated. An APT-compatible repository and authenticated index policy remain
+follow-up work, rather than a custom installer being presented as APT.
+
+## Reproduction
+
+Run these host commands with the development disk stopped:
+
+```powershell
+.\build.ps1
+.\build-image-tool.ps1
+python prepare-build-volume.py
+python native-packages.py make
+```
+
+The volume preparer refuses existing destinations and grows a **new copy** to
+8 GiB ext2, preserving the FAT32 exchange partition. A temporary Linux VM runs
+offline e2fsck/resize2fs only. Its automatic preen repairs apply to the copy;
+serious filesystem errors stop preparation. Failed volumes retain a `.partial`
+suffix. The original development image is not resized or formatted.
+
+The native runner uses another disposable image in `build/native-package-tests`.
+It keeps `serial.log`, `results.json`, the disk, and the generated job script.
+Guest logs and output packages live under `/work/packages/logs` and
+`/work/packages/out`. Use `--resume` only when deliberately reusing that test
+disk. A failed source build directory is preserved and not silently reused;
+inspect its log and choose a fresh candidate for a clean retry.
+
+Only the bootstrap tools are initially available. Later recipes require their
+listed prerequisites to have been installed on the candidate. Passing a list of
+package names does not install dependencies automatically. Recipes beyond the
+tested milestones are provisional and must not be treated as successful ports.
+
+## Compiler gates and platform findings
+
+`test-bootstrap-cxx.py` restores C++ components from the existing SHA-512-pinned
+musl.cc archive on a disposable disk and tests STL and exception handling. This
+is an **imported bootstrap**, not the requested native GCC rebuild.
+
+The GCC recipe runs upstream `make bootstrap`, including its stage comparison,
+then invokes `tests/compiler-corpus.sh` against the staged candidate. The corpus
+checks integer arithmetic, floating point, varargs, sorting, allocation,
+setjmp/longjmp, atomics and pthreads at three optimization levels. These gates
+do not replace the upstream GCC testsuite. No compiler activation is performed.
+
+Platform fixes found while starting clean configure runs:
+
+* Kernel `execve` now resolves `#!` scripts with bounded recursion, executable
+  permission checks and one optional interpreter argument. Direct execve tests
+  avoid Bash's fallback and exercise errors as well as successful execution.
+* Repeated compiler probes reached the virtual window used for guarded kernel
+  stacks. That window is now excluded from the identity-addressed physical page
+  allocator. The regression cycles through 960 MiB of allocations and checks
+  contents after writing each page.
+* Creating a read-only file through a writable `O_CREAT` descriptor now permits
+  the initial writes. Later opens still enforce its mode. This fixes extraction
+  of Bash's read-only test fixtures and has a direct syscall regression.
+* Filesystem entry-cache eviction runs between operations and pins open
+  descriptors and recovery entries. A guest regression traverses 20,000 paths
+  and checks an open descriptor across eviction; a host fixture checks the
+  production eviction routine. The raw AuroraFS directory is never evicted.
+* VirtIO checks the used ring before resetting a device on timeout, including
+  counter wrap and partial batches. A truly incomplete request still disables
+  the volume. The bounded watchdog allows 30 seconds plus batch allowance;
+  the previous 2.5-second single-request deadline failed during source extraction.
+  The ext2 block cache is now 128 blocks (512 KiB), reducing metadata rereads.
+
+Run `python test-exec-scripts.py` for these regressions. The clean Make configure
+probe is `python aurora_vm.py tests/configure-make.sh --folder build/configure-probe`.
+
+Validated on disposable images: interpreter/error cases and 960 MiB allocator
+cycling (`build/exec-script-tests`), C++ STL/exceptions (`build/bootstrap-cxx-tests`),
+the bootstrap compiler corpus at `-O0/-O2/-O3` (`build/compiler-corpus-tests`), and
+80 Bash/sed/grep pipelines on four CPUs (`build/build-shell-tests`). GNU Make
+4.4.1 completed clean native configure, compilation, execution and staged
+installation on one CPU (`build/configure-make-single`); its `config.log` and
+configure/build/install logs are retained there. This run used the source archive
+already present on the bootstrap image. The separate download-to-package run
+must pass before claiming the full network workflow.
+
+The pinned GCC archive contains 114,451 entries, including its testsuites;
+the bounded cache now evicts entries, but full-tree bootstrap remains untested.
+Earlier long builds failed, and a one-CPU Perl extraction captured a genuinely
+incomplete VirtIO request. Larger-build reliability must be validated after the
+cache/watchdog changes; smaller passing tests do not establish it. Memory/task limits,
+real cross-process file locks, the existing patched musl runtime, native dpkg,
+and interruption recovery must all be validated before replacing bootstrap
+tools or claiming transactional package installation. ext2 still lacks a
+journal or general ordered-metadata recovery; see [FILESYSTEMS.md](FILESYSTEMS.md).

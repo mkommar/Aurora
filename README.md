@@ -20,6 +20,9 @@ then `./demo`. Compilation and linking happen inside Aurora. See
 GNU Bash, Make and the source-bootstrap workflow are described in
 [Development foundations](FOUNDATIONS.md), including the remaining work in
 steps 1â€“7. GNU Make can now rebuild and install itself inside Aurora.
+The clean-source GNU build and Debian-format package work is tracked in
+[Native packages](PACKAGES.md); full toolchain bootstrap and package lifecycle
+management remain in progress.
 Musl POSIX threads use shared address spaces and futex synchronization.
 The launcher now starts four CPUs; use `-Cpus 1` for a single-CPU boot.
 ELF interpreters, PIE applications and shared-library loading are supported.

@@ -248,9 +248,12 @@ Frame *schedule(void) {
     }
     current_task=TASK_COUNT;return 0;
 }
+static void native_cache_trim(void);
 static void filesystem_enter(void){
     while(filesystem_owner>=0&&filesystem_owner!=(int)current_task){tasks[current_task].state=WAIT_FS;kernel_suspend();}
+    int fresh=filesystem_owner!=(int)current_task;
     filesystem_owner=current_task;
+    if(fresh)native_cache_trim();
 }
 static void filesystem_leave(void){
     filesystem_owner=-1;for(int i=0;i<TASK_COUNT;i++)if(tasks[i].state==WAIT_FS)tasks[i].state=RUNNABLE;

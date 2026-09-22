@@ -1,0 +1,4 @@
+# Shell scripts execute inside Aurora; CRLF would change interpreter paths and
+# introduce carriage returns into configure options after a Windows checkout.
+*.sh text eol=lf
+*.patch text eol=lf

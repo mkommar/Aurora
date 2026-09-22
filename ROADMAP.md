@@ -84,18 +84,31 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    certificate rejection and compiling source fetched over TLS. Prepared
    Mbed TLS/curl trees rebuild inside Aurora with `test-network.py --rebuild`;
    their configure results still originate in the bootstrap environment.
-   Remaining: native configure, integrated download-to-install recipes,
+   Remaining: native configure for the remaining ports, integrated download-to-install recipes,
    signature-verification policy and routine CA/source-lock maintenance.
-7. **Complete GNU build prerequisites.** Add diffutils, patch, m4, Autoconf,
-   Automake, Libtool, Bison and Flex, plus Perl/Python and compression tools where
-   required. Run configure inside Aurora instead of importing its output.
-8. **Rebuild the compiler and tool suite inside Aurora.** Progress from Make to
-   Bash and other GNU packages, then binutils, the C runtime and GCC with its
-   prerequisite libraries. Compare successive compiler builds and run a test
-   corpus before replacing the bootstrap compiler.
+7. **Complete GNU build prerequisites.** In progress: 23 source archives have
+   pinned hashes, dependency and license metadata, and native build recipes.
+   The runner downloads sources in Aurora and invokes clean configure scripts;
+   bounded `#!` interpreter execution and an allocator regression fix support
+   this work. Finish and validate the native ports of diffutils, patch, m4,
+   Autoconf, Automake, Libtool, Bison, Flex, Perl/Python and compression tools.
+   See [PACKAGES.md](PACKAGES.md) for evidence and remaining limits.
+8. **Rebuild the compiler and tool suite inside Aurora.** GNU Make 4.4.1 has
+   configured from a clean archive, compiled and staged inside Aurora. Progress
+   through Bash and other GNU packages, then binutils, the C runtime and GCC with its
+   prerequisite libraries. A provisional recipe requires upstream bootstrap
+   stage comparison and a runtime corpus; a completed native GCC bootstrap is
+   still pending. Pinned C++ bootstrap components passed STL/exception tests;
+   path-cache eviction passed a 20,000-path/open-descriptor regression. Validate
+   those foundations against the full GCC tree. Keep the bootstrap compiler
+   until the replacement passes those gates.
 9. **Reproducible package tooling.** Record source hashes, dependencies, patches,
    licenses and recipes. Add staged installation, file ownership records,
-   removal and rollback. Demonstrate download-to-install entirely in Aurora.
+   removal and rollback. The native recipe uses real `.deb` archive structure,
+   deterministic archive metadata and `DESTDIR`; complete upstream dpkg and
+   APT-compatible repository tooling, ownership/removal/rollback tests and the
+   download-to-install demonstration. These lifecycle features are not yet
+   implemented. See [PACKAGES.md](PACKAGES.md).
 10. **Development terminal and editor.** Add ANSI/VT behavior, scrollback, PTYs,
     Readline, complete job control, multiple terminals and an editor such as
     GNU nano. Make compiler output and source editing practical.
@@ -146,7 +159,7 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    images, including malformed GPTs, failed writes/flushes and interrupted
    recovery. `test-recovery.py` exercises the production recovery routines
    against an in-memory device; `test-filesystems.py` covers guest behavior.
-2. Configure and build GNU Make from a clean archive entirely inside Aurora;
+2. Extend the completed clean-configure GNU Make build to the other GNU ports;
    retain `config.log`, syscall failures and test output. Add prerequisites
    needed by the next package, then stage its installation and record ownership.
 3. Improve terminal scrollback/log capture, then PTYs and job control. Measure

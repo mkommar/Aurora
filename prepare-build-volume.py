@@ -19,6 +19,9 @@ def grow(source, target, mib):
     source, target = Path(source).resolve(), Path(target).resolve()
     if target.exists() or source == target:
         raise ValueError('Destination must be a new file')
+    final=target
+    target=target.with_suffix(target.suffix+'.partial')
+    if target.exists(): raise ValueError('A previous partial image exists')
     if not 1024 <= mib <= 32768:
         raise ValueError('Choose 1024..32768 MiB')
     with source.open('rb') as disk:
@@ -64,7 +67,8 @@ def grow(source, target, mib):
                 out.seek(current*512); out.write(header)
             out.seek(458); out.write(struct.pack('<I',new_total-1))
     resize_ext2(target)
-    return target
+    target.rename(final)
+    return final
 
 
 def resize_ext2(target):

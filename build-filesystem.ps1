@@ -1,6 +1,9 @@
 # Included by build.ps1; compile the pinned library with ext2-only features.
 $ext4 = 'third_party/lwext4-58bcf89a121b72d4fb66334f1693d3b30e4cb9c5'
 $fsFlags = @('-Oz','-DCONFIG_USE_DEFAULT_CFG=1','-DCONFIG_EXT_FEATURE_SET_LVL=2','-DCONFIG_JOURNALING_ENABLE=0','-DCONFIG_XATTR_ENABLE=0','-DCONFIG_EXTENTS_ENABLE=0','-DCONFIG_HAVE_OWN_ERRNO=1','-DCONFIG_DEBUG_PRINTF=0','-DCONFIG_DEBUG_ASSERT=0',"-I$ext4/include",'-Isrc/fs_platform')
+# A source tree repeatedly revisits directory/inode blocks. The default eight
+# blocks cause excessive device I/O; 128 blocks use 512 KiB of the 16 MiB heap.
+$fsFlags += '-DCONFIG_BLOCK_DEV_CACHE_SIZE=128'
 $fsObjects = @()
 foreach ($source in (Get-ChildItem "$ext4/src/*.c" | Where-Object { $_.BaseName -notin @('ext4_mkfs','ext4_mbr','ext4_xattr','ext4_extent') })) {
     $object = "$output/$($source.BaseName).o"

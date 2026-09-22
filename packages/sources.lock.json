@@ -10,11 +10,11 @@
       "license": "GPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip"
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip"
       ],
       "patches": [],
       "recipe": "autotools"
@@ -27,11 +27,11 @@
       "license": "GPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip"
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip"
       ],
       "patches": [],
       "recipe": "autotools"
@@ -44,16 +44,20 @@
       "license": "GPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "m4",
         "perl"
       ],
       "patches": [],
-      "recipe": "autotools"
+      "recipe": "autotools",
+      "runtime_dependencies": [
+        "m4",
+        "perl"
+      ]
     },
     "automake": {
       "version": "1.16.5",
@@ -63,16 +67,20 @@
       "license": "GPL-2.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "autoconf",
         "perl"
       ],
       "patches": [],
-      "recipe": "autotools"
+      "recipe": "autotools",
+      "runtime_dependencies": [
+        "autoconf",
+        "perl"
+      ]
     },
     "libtool": {
       "version": "2.4.7",
@@ -82,11 +90,11 @@
       "license": "GPL-2.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "m4"
       ],
       "patches": [],
@@ -100,15 +108,18 @@
       "license": "GPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "m4"
       ],
       "patches": [],
-      "recipe": "autotools"
+      "recipe": "autotools",
+      "runtime_dependencies": [
+        "m4"
+      ]
     },
     "flex": {
       "version": "2.6.4",
@@ -118,16 +129,19 @@
       "license": "BSD-2-Clause",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "m4",
         "bison"
       ],
       "patches": [],
-      "recipe": "autotools"
+      "recipe": "autotools",
+      "runtime_dependencies": [
+        "m4"
+      ]
     },
     "perl": {
       "version": "5.40.2",
@@ -137,11 +151,11 @@
       "license": "Artistic-1.0-Perl OR GPL-1.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip"
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip"
       ],
       "patches": [],
       "recipe": "perl"
@@ -154,11 +168,11 @@
       "license": "0BSD AND LGPL-2.1-or-later AND GPL-2.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip"
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip"
       ],
       "patches": [],
       "recipe": "autotools"
@@ -171,18 +185,22 @@
       "license": "GPL-2.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "xz",
         "perl",
         "libmd",
-        "bootstrap-g++"
+        "bootstrap-g++",
+        "patch"
       ],
       "patches": [],
-      "recipe": "autotools"
+      "recipe": "autotools",
+      "runtime_dependencies": [
+        "perl"
+      ]
     },
     "make": {
       "version": "4.4.1",
@@ -192,11 +210,11 @@
       "license": "GPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip"
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip"
       ],
       "patches": [],
       "recipe": "autotools"
@@ -209,11 +227,11 @@
       "license": "GPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip"
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip"
       ],
       "patches": [],
       "recipe": "autotools"
@@ -226,11 +244,11 @@
       "license": "GPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "xz"
       ],
       "patches": [],
@@ -244,11 +262,11 @@
       "license": "BSD-3-Clause AND BSD-2-Clause AND ISC",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "xz"
       ],
       "patches": [],
@@ -262,11 +280,11 @@
       "license": "Python-2.0",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "zlib",
         "bzip2",
         "xz"
@@ -282,11 +300,11 @@
       "license": "Zlib",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip"
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip"
       ],
       "patches": [],
       "recipe": "zlib"
@@ -299,11 +317,12 @@
       "license": "bzip2-1.0.6",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip"
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
+        "diffutils"
       ],
       "patches": [],
       "recipe": "bzip2"
@@ -316,11 +335,11 @@
       "license": "GPL-3.0-or-later AND LGPL-2.1-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "xz",
         "zlib"
       ],
@@ -335,11 +354,11 @@
       "license": "LGPL-3.0-or-later OR GPL-2.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "xz"
       ],
       "patches": [],
@@ -353,11 +372,11 @@
       "license": "LGPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "xz",
         "gmp"
       ],
@@ -372,11 +391,11 @@
       "license": "LGPL-3.0-or-later",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "gmp",
         "mpfr"
       ],
@@ -391,11 +410,11 @@
       "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
       "build_dependencies": [
         "bootstrap-gcc",
-        "bash",
-        "make",
-        "coreutils",
-        "tar",
-        "gzip",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
         "xz",
         "binutils",
         "gmp",
@@ -405,6 +424,37 @@
       ],
       "patches": [],
       "recipe": "gcc"
+    },
+    "musl": {
+      "version": "1.2.2",
+      "archive": "musl-1.2.2.tar.gz",
+      "url": "https://musl.libc.org/releases/musl-1.2.2.tar.gz",
+      "sha256": "9b969322012d796dc23dda27a35866034fa67d8fb67e0e2c45c913c3d43219dd",
+      "license": "MIT",
+      "build_dependencies": [
+        "bootstrap-gcc",
+        "bootstrap-bash",
+        "bootstrap-make",
+        "bootstrap-coreutils",
+        "bootstrap-tar",
+        "bootstrap-gzip",
+        "patch"
+      ],
+      "patches": [
+        {
+          "file": "patches/musl-fork-tid.patch",
+          "sha256": "23b30d14bda645af372521c66af2dd73be06d7b4c5d1f1a7255f44c793d3b271",
+          "strip": 1
+        }
+      ],
+      "recipe": "musl"
     }
+  },
+  "bootstrap": {
+    "gnu_source_lock": "gnu-bootstrap.lock.json",
+    "gnu_source_lock_sha256": "6bef9945bbe00abfedce2a38d60ac7c75a29f52d168a35620a06927b7b77ed62",
+    "compiler_url": "https://musl.cc/x86_64-linux-musl-native.tgz",
+    "compiler_sha512": "44d441ad9aa11a06feddf3daa4c9f53ad7d9ca37af1f5a61379aca07793703d179410cea723c1b7fca94c4de19a321228bdb3656bc5cbdb5e3bea8e2d6dac6c7",
+    "runtime_notes": "The existing image includes the musl 1.2.2 fork backport documented in THREADS.md and SMP-DYNAMIC.md."
   }
 }

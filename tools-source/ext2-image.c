@@ -13,7 +13,7 @@ EXT4_BLOCKDEV_STATIC_INSTANCE(device,512,1048576,opened,read_blocks,write_blocks
 __declspec(dllexport) void au_attach(sector_callback callback){transfer=callback;}
 __declspec(dllexport) void au_geometry(uint64_t sectors){device.bdif->ph_bcnt=sectors;device.part_size=sectors*512;}
 __declspec(dllexport) int au_format(sector_callback callback){
-    transfer=callback;static struct ext4_fs fs;
+    transfer=callback;au_geometry(1048576);static struct ext4_fs fs;
     struct ext4_mkfs_info info={.len=512ULL*1024*1024,.block_size=4096,.inodes=32768,.label="Aurora development"};
     return ext4_mkfs(&fs,&device,&info,2);
 }
