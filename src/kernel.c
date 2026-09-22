@@ -311,14 +311,17 @@ Frame *trap_dispatch(Frame *frame) {
         if((n>=41&&n<=55)||n==318||n==284||n==290)needs_fs=0;
         if(n==34||n==130||n==127||n==128||n==129||n==297||n==36||n==37||n==38||n==100||(n>=140&&n<=148)||n==157||n==160||n==324||n==13||n==14)needs_fs=0;
         if((n==0||n==1||n==3||n==5||n==16||n==19||n==20||n==72)&&frame->rdi<NATIVE_FDS&&native_process[current_task].fd[frame->rdi].kind>=6)needs_fs=0;
-        if(needs_fs)filesystem_enter();if(ext2_clean&&native_mutates(frame))ext2_dirty();Frame *next=native_dispatch(frame);if(needs_fs)filesystem_leave();return next;
+        if(needs_fs)filesystem_enter();
+        int dirty_error=native_mutates(frame)?ext2_dirty():0;
+        if(dirty_error){t->frame.rax=-dirty_error;if(needs_fs)filesystem_leave();return &t->frame;}
+        Frame *next=native_dispatch(frame);if(needs_fs)filesystem_leave();return next;
     }
     /* Legacy AuroraFS calls also sleep in interrupt-driven ATA now, so they
        share the filesystem mutex and its kernel continuation. */
     int fs_call=frame->rax==SYS_NATIVE_SPAWN||frame->rax==SYS_NATIVE_READ||frame->rax==SYS_NATIVE_WRITE||frame->rax==SYS_NATIVE_LIST||frame->rax==SYS_SYNC
         ||frame->rax==SYS_FILE_READ||frame->rax==SYS_FILE_WRITE||frame->rax==SYS_FILE_LIST||frame->rax==SYS_SPAWN;
     if(fs_call)filesystem_enter();
-    if(frame->rax==SYS_FILE_WRITE||frame->rax==SYS_NATIVE_WRITE)ext2_dirty();
+    if((frame->rax==SYS_FILE_WRITE||frame->rax==SYS_NATIVE_WRITE)&&ext2_dirty()){filesystem_leave();t->frame.rax=ERR_IO;return &t->frame;}
     i64 result=0;int reschedule=0;
     switch(frame->rax) {
     case SYS_YIELD: reschedule=1;break;

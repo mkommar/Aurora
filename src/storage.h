@@ -68,7 +68,9 @@ static u64 ata_identify(int slave){
     return words[60]|((u64)words[61]<<16);
 }
 static int sector_io(u32 lba,void *buffer,int write) {if(lba>=32768)return 0;return ata_transfer(lba,buffer,write,0);}
-static int disk_flush(void) {
+static int ata_flush(int slave) {
+    outb(0x1f6,slave?0xf0:0xe0);for(int i=0;i<4;i++)(void)inb(0x3f6);
+    if(!ata_wait(0))return 0;
     u32 sequence=++ata_sequence;ata_arm();outb(0x1f7,0xe7);
     /* Host-backed large images can take longer to flush than a sector I/O. */
     int slept=ata_sleep(sequence,3000);if(!slept)return 0;
@@ -76,6 +78,7 @@ static int disk_flush(void) {
     for(u32 i=0;i<100000000;i++){u8 s=inb(0x1f7);if(!s||s==255)return 0;if(!(s&128))return !(s&0x21);}
     return 0;
 }
+static int disk_flush(void){return ata_flush(0);}
 static int name_valid(const char *s) {
     if(!s[0])return 0;
     for(int i=0;i<32;i++) {

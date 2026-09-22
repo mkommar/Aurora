@@ -731,7 +731,7 @@ static i64 native_exec_call(u64 path_address,u64 argv_address,u64 env_address){
         if(!native_string(*a,exec_env[exec_envc],4096))return -7;exec_envc++;if(i==127)return -7;}
     return native_exec(current_task,index);
 }
-static i64 native_sync(void){int error=ext2_ready?ext2_sync():0;if(error)return -error;return (virtio_present?virtio_transfer(0,0,0,4):disk_flush())?0:-5;}
+static i64 native_sync(void){int error=ext2_ready?ext2_sync():0;if(error)return -error;if(native_ready&&!native_disk_flush())return -5;return !fs_ready||disk_flush()?0:-5;}
 #include "native_wait.h"
 #include "native_network.h"
 #include "native_threads.h"

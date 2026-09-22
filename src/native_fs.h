@@ -9,8 +9,10 @@ static u8 native_sector[512];
 static int ns_equal(const char *a,const char *b){while(*a&&*a==*b)a++,b++;return *a==*b;}
 static u64 ns_length(const char *s){u64 n=0;while(s[n])n++;return n;}
 static void ns_copy(char *d,const char *s){while((*d++=*s++)){} }
+static int native_disk_flush(void){return virtio_present?virtio_transfer(0,0,0,4):ata_flush(1);}
 #include "partitions.h"
 static int native_raw_disk(u32 sector,void *data,int write) {
+    if(sector>=native_disk_sectors||sector>=0x10000000)return 0;
     if(virtio_present)return virtio_transfer(sector,data,1,write?1:0);
     int ok=ata_transfer(sector,data,write,1);
     if(!ok){serial("NATIVE disk transfer failed sector=");hex(sector);serial(" status=");hex(inb(0x1f7));serial("\r\n");}return ok;
@@ -36,6 +38,13 @@ static i64 native_device_read(int device,u64 offset,void *buffer,u64 count){
     return count;
 }
 static int native_path(char *,const char *,const char *);
+/* This short (no FAT alias) component is reserved at every path depth.
+ * Ignore FAT case and trailing dot/space variants before comparing. */
+static int recovery_component(const char *name,u32 length){
+    while(length&&(name[length-1]=='.'||name[length-1]==' '))length--;
+    if(length!=8)return 0;const char *reserved="AURORARC";
+    for(u32 i=0;i<8;i++){char c=name[i];if(c>='a'&&c<='z')c-=32;if(c!=reserved[i])return 0;}return 1;
+}
 #include "fat_backend.h"
 #include "ext2_backend.h"
 /* AuroraFS appears to native processes as /aurorafs: up to 32 flat files of
@@ -119,6 +128,7 @@ static int native_path(char *out,const char *cwd,const char *input){
     memcpy(joined,cwd,a);if(a)joined[a++]='/';memcpy(joined+a,input,b+1);
     int length=1;out[0]='/';char *p=joined;
     while(*p){while(*p=='/')p++;if(!*p)break;char *begin=p;while(*p&&*p!='/')p++;int n=(int)(p-begin);
+        if(recovery_component(begin,n))return 0;
         if(n==1&&begin[0]=='.')continue;
         if(n==2&&begin[0]=='.'&&begin[1]=='.'){while(length>1&&out[length-1]!='/')length--;if(length>1)length--;continue;}
         if(!ext2_ready&&length==1&&n==3&&begin[0]=='u'&&begin[1]=='s'&&begin[2]=='r')continue;

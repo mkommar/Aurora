@@ -16,7 +16,7 @@ DRESULT disk_write(BYTE drive,const BYTE *buffer,LBA_t sector,UINT count){
 }
 DRESULT disk_ioctl(BYTE drive,BYTE command,void *buffer){
     if(drive)return RES_PARERR;
-    if(command==CTRL_SYNC)return (virtio_present?virtio_transfer(0,0,0,4):disk_flush())?RES_OK:RES_ERROR;
+    if(command==CTRL_SYNC)return native_disk_flush()?RES_OK:RES_ERROR;
     if(command==GET_SECTOR_COUNT){*(LBA_t *)buffer=fat_partition_sectors;return RES_OK;}
     if(command==GET_BLOCK_SIZE){*(DWORD *)buffer=1;return RES_OK;}return RES_PARERR;
 }

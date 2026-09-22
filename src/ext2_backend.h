@@ -39,14 +39,7 @@ static int ext2_device_write(struct ext4_blockdev *b,const void *in,uint64_t sec
     return 0;
 }
 EXT4_BLOCKDEV_STATIC_INSTANCE(ext2_device,512,1048576,ext2_device_open,ext2_device_read,ext2_device_write,ext2_device_open,0,0);
-/* Superblock state follows Linux: mounting marks the volume in use, sync/fsync
- * flush the cache and mark it clean, and the first mutation after that marks
- * it in use again. A boot that finds the in-use mark reports an unclean stop. */
-static int ext2_clean;
-volatile u64 ext2_unclean_mounts,ext2_dirty_marks;
-static int ext2_state(u16 state){struct ext4_sblock *sb=0;int error=ext4_get_sblock("/",&sb);if(error)return error;sb->state=state;return ext4_sb_write(&ext2_device,sb);}
-static int ext2_sync(void){int error=ext4_cache_flush("/");if(!error)error=ext2_state(1);if(!error)ext2_clean=1;return error;}
-static void ext2_dirty(void){if(ext2_ready&&ext2_clean){ext2_clean=0;ext2_dirty_marks++;ext2_state(2);}}
+#include "ext2_recovery.h"
 /* The superblock's free counts are only authoritative after a clean unmount,
  * as on Linux; lwext4 maintains them in memory and writes them back with the
  * state. Recompute them from the group descriptors at mount so an unclean stop
@@ -68,7 +61,7 @@ static void ext2_init(void){
     ext2_device.bdif->ph_bcnt=native_partition_sectors;ext2_device.part_size=(u64)native_partition_sectors*512;
     int error=ext4_device_register(&ext2_device,"development");if(!error)error=ext4_mount("development","/",0);
     if(error){serial("EXT2 mount failed error=");hex(error);serial("\r\n");return;}
-    error=ext2_recount();if(error){serial("EXT2 recount failed error=");hex(error);serial("\r\n");}
+    error=ext2_recount();if(error||!native_disk_flush()){serial("EXT2: mount metadata not durable; volume disabled\r\n");ext2_failed(error);return;}
     ext2_ready=native_ready=1;native_count=0;serial("EXT2: writable development volume mounted\r\n");
 }
 static int ext2_find(const char *path){
