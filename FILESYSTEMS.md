@@ -1,6 +1,6 @@
 # Filesystem correctness and recovery
 
-Updated 2026-09-18. This describes roadmap item 4: one namespace for legacy and
+Updated 2026-09-22. This describes roadmap item 4: one namespace for legacy and
 native processes, complete link and metadata semantics, crash-orphan reclaim,
 backup-GPT recovery and a filesystem checker that runs inside Aurora.
 `test-filesystems.py` verifies all of it, including power loss during writes.
@@ -50,48 +50,69 @@ FAT date/time to Unix epochs. `st_ino` on FAT is a hash of the path and
 
 ## Open files, unlink and crash orphans
 
-Unlinking or renaming over a file that another descriptor still has open
-parks it under a hidden name (`.aurora-orphan-<16 hex digits>` in the volume
-root, `/` for ext2 and `/exchange` for FAT32) and removes it when the last
-descriptor closes. Descriptors keep reading and writing the parked file.
+Unlinking or renaming over an open ext2/FAT32 file parks it as
+`.aurora-orphan-<16 lowercase hex digits>` inside `/AURORARC` or
+`/exchange/AURORARC`. Descriptors continue to use it until the last close.
+These directories contain a versioned `OWNER` marker and are reserved by the
+kernel. User path handling rejects the `AURORARC` component, including FAT
+case/trailing-dot/space variants and symlink targets. The short directory name
+has no separate FAT 8.3 alias. Raw devices remain read-only.
 
-If the machine stops before those closes happen, the parked names remain on
-disk. `vfs_reclaim_orphans()` runs at every mount, scans both roots and
-deletes any parked file or directory, logging
-`VFS: reclaimed crash orphans count=N`. The `vfs_orphans_reclaimed` counter
-records the total.
+At mount, recovery uses only directories with the expected marker. A preexisting
+collision, absent/invalid marker or I/O failure disables parking for that volume;
+existing content is preserved. Initialization interrupted before the marker is
+durable also fails closed on the next boot and requires offline inspection.
+Reclamation matches the complete orphan name, only removes empty directories,
+and leaves an entry cached if last-close deletion fails; explicit `close()`
+returns the deletion error. Unknown entries are preserved. The `vfs_orphans_reclaimed` counter and serial log report deletions.
+
+**Upgrade behavior:** old root-level `.aurora-orphan-*` names are no longer
+reclaimed automatically. Their names cannot distinguish old parked files from
+ordinary user data. Inspect these files offline before removing them. AuroraFS
+still uses its existing flat-file parking behavior; this recovery-directory
+scheme applies to ext2 and FAT32.
 
 ## ext2 clean and in-use state
 
-Mounting marks the ext2 superblock *in use* (`s_state = 2`). `sync`, `fsync`
-and the desktop's `reboot`/`poweroff` flush the cache and mark it *clean*
-(`s_state = 1`); the first mutating syscall afterwards marks it in use again.
-A boot that finds the in-use mark logs
+Mounting writes the ext2 in-use marker (`s_state = 2`) and flushes the
+selected development device before exposing the volume. Recount or flush
+failure disables the ext2 mount. A boot that sees the in-use marker logs
 `EXT2: previous session did not unmount cleanly` and increments
-`ext2_unclean_mounts`. The superblock's free block and inode totals are
-recomputed from the group descriptors at every mount (lwext4 only writes
-them back on unmount, as Linux does), so the checker's totals and the
-superblock agree after an unclean stop.
+`ext2_unclean_mounts`.
 
-Uncommitted data is still lost on power loss: lwext4 caches writes and there
-is no journal or ordering guarantee. Data that `fsync` returned for survives.
+`sync`/`fsync` flush cached filesystem writes and the device **before** writing
+and flushing the clean marker (`s_state = 1`). The next mutating syscall must
+write and flush the in-use marker before proceeding. Last-close orphan cleanup
+also follows this rule. State-write or flush failures propagate as I/O errors
+and latch the session against further mutations; reboot and inspect the volume
+before resuming writes. A failed sync never reports success. ATA flushes select
+the intended master/slave explicitly, and global sync flushes the boot disk too.
+
+The superblock's free totals are recomputed from group descriptors at mount.
+This repairs stale summary totals, not damaged bitmaps or directory structures.
+There is still no journal or general metadata transaction ordering. Successful
+fsync has a device durability boundary, but later interrupted metadata operations
+can still damage an unjournaled filesystem. Unsynced writes are not guaranteed
+to survive; the tests cover particular interruption points, not every crash.
 
 ## Backup-GPT recovery
 
-`native_partitions_init()` validates the protective MBR, then loads the
-primary header at LBA 1 and the backup header (from the primary's alternate
-LBA, or the last sector when the primary is unreadable; the disk size comes
-from the VirtIO configuration or ATA IDENTIFY). Each copy is checked for
-signature, header size, header CRC, self-LBA and partition-table CRC.
+`native_partitions_init()` validates GPT headers at LBA 1 and the actual last
+device sector (from VirtIO capacity or ATA IDENTIFY). It checks signature,
+revision, reserved fields, header/table CRCs, reciprocal header locations,
+metadata bounds and the usable range. All used entries, including unknown
+partition types, must fit that range without overlap. The current driver limit
+is 28-bit sector addressing; unsupported GPT geometry is rejected.
 
-- Primary bad, backup good: partitions come from the backup, the primary
-  header and table are rewritten, `gpt_backup_recoveries` and `gpt_repairs`
-  increment (`GPT: primary header damaged; recovered from backup` and
-  `GPT: primary header rewritten from backup`).
-- Backup bad, primary good: the backup is rewritten from the primary
-  (`GPT: backup header damaged; rewritten from primary`).
-- Both bad: `GPT: both headers damaged`; the development and exchange
-  volumes are not mounted and the boot disk still serves the desktop.
+- One invalid copy: use the other, validate the repair destination, write and
+  flush the replacement table, then write and flush the replacement header.
+  Only completed repairs increment `gpt_repairs`.
+- Repair write/flush failure: increment `gpt_repair_failures`, report the error
+  and leave the development disk unmounted. The surviving copy is untouched.
+- Two valid but inconsistent copies: refuse mounting and preserve both for
+  offline inspection rather than guessing which is authoritative.
+- Both invalid: report `GPT: both headers damaged`; development/exchange remain
+  unmounted while the boot disk still serves the desktop.
 
 ## Raw devices and the checker
 
@@ -120,8 +141,8 @@ The checker reports, rather than repairs; repairing is future work.
 ## Verification
 
 `python test-filesystems.py` (options `--disk`, `--accel`, `--cpus`,
-`--qmp-port`) stages the sources onto a copy of `build/development.img` and
-runs five phases on hidden QEMU instances:
+`--qmp-port`, `--cut-rounds`, `--stress-cut`) stages the sources onto a copy of `build/development.img` and
+runs six phases on hidden QEMU instances:
 
 1. **Fresh copy.** Builds `fsck-aurora`, `tests/filesystem.c` and
    `tests/interrupted-writes.c` in the guest; `fsck-aurora -v` reports clean;
@@ -134,22 +155,45 @@ runs five phases on hidden QEMU instances:
 2. **Interrupted writes.** `interrupted-writes` `fsync`s a 1 MiB file, leaves
    an unlinked open file on ext2 and on FAT32, then streams renames and
    metadata-heavy writes while the harness cuts power through QMP `quit`.
+   The default pauses without sync at completed operation boundaries in rounds
+   0, 5 and 12, cuts power and checks recovery after each. `--stress-cut` leaves
+   the workload running and can cut inside the next syscall; this is a separate
+   diagnostic mode and is not guaranteed to pass without metadata transactions.
 3. **Recovery.** The reboot logs the unclean stop, reclaims both orphans, the
-   committed file hashes correctly, no orphan names remain, `fsck-aurora`
-   finds no structural damage and the regression passes again.
+   committed file hashes correctly, ordinary root filename lookalikes survive,
+   `fsck-aurora` finds no structural damage and the regression passes again.
 4. **GPT copies.** The host damages the primary header, then the backup
    table, then both, and restores the primary; each boot recovers, rewrites
    the damaged copy and the checker sees both copies valid.
 5. **ATA attachment.** The same disk on the ATA primary slave, sized with
    IDENTIFY, passes `fsck-aurora --no-boot`.
+6. **Recovery-directory collision.** Invalid marker content disables parking;
+   unlink of an open file fails without losing its data. Host read-only checks
+   confirm that the marker and orphan-looking directory contents are unchanged.
 
-47 checks pass. The kernel image with its embedded user services is 226,312
-bytes, within the loader's 240 KiB limit.
+`python test-recovery.py` compiles the production GPT and ext2 recovery
+routines into a host test library backed by an in-memory block device. It tests
+CRC-valid hostile geometry, partition overlap, conflicting copies, every GPT
+repair write/flush failure and restart boundary, and ext2 dirty/clean ordering
+with injected failures. It writes `build/recovery-tests/results.json`.
+Guest results are written to the selected test folder's `results.json`.
+An unrestricted cut after round 0 during this work reproduced an inode marked
+free while its on-disk mode/link fields remained populated; `fsck-aurora`
+reported an error. The failed run is retained in `build/recovery-final-tests/`.
+This is evidence of the outstanding mid-operation crash-consistency limitation,
+not a claim that marker ordering provides filesystem transactions.
+Validation on 2026-09-22: **305 host recovery checks**, **69 guest filesystem
+checks** (three operation-boundary cuts, GPT repair, ATA and collision
+preservation), and **28 microkernel + 12 GUI checks** passed. The final guest
+run is recorded in `build/recovery-release-tests/results.json`. The normal
+kernel/service bundle is 229,256 bytes. `build.ps1` continues to enforce the
+loader's 240 KiB bundle limit.
 
 ## Remaining work
 
-- An ext2 journal or ordered metadata writes so unsynced data survives power
-  loss; FAT32 dirty-bit handling.
+- An ext2 journal or ordered metadata writes for structural consistency across
+  interrupted mutations; FAT32 dirty-bit handling. Unsynced data durability
+  remains a separate guarantee.
 - A repairing mode for `fsck-aurora` (rebuild bitmaps, relink lost inodes,
   fix link counts), and reporting AuroraFS slots that overlap or exceed the
   volume.

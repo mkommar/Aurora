@@ -7,7 +7,7 @@ loader reads four 120-sector chunks beginning at LBA 9 into physical `0x10000`,
 copies the firmware font, selects VBE 1024x768x32 graphics, and enters long mode.
 The first-stage loader and stage-two loader occupy LBA 0 and LBA 1–8.
 
-The storage extension adds synchronous ATA PIO, AuroraFS, and a validated ELF
+The storage extension adds interrupt-driven ATA/VirtIO I/O, AuroraFS, and a validated ELF
 loader inside the kernel (`src/storage.h`). This is a compromise from a pure
 microkernel; storage has not yet been moved to a user service. GUI and input/display
 services retain their existing isolation.
@@ -272,7 +272,7 @@ VirtIO block requests use a 16 KiB ring and eight 64 KiB bounce slots at
 `0x0d000000`; one submission carries up to eight in-flight chains.
 Exec staging uses a 1 MiB string pool at `0x0c400000`, environment storage at
 `0x0c500000`, and argument-pointer tables at `0x0c600000` and `0x0c610000`.
-The native state lock protects these shared staging buffers. Up to 4,096
+The native state lock protects these shared staging buffers. Up to 16,384
 arguments are accepted; exceeding the count or byte bounds returns `E2BIG`
 before replacing the old image.
 The final 2 MiB of each native range is a stack with an unmapped guard below it.

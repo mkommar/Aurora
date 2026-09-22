@@ -91,19 +91,19 @@ static void directories(void){
 }
 static void open_files(void){
     unlink("/work/fs-open");unlink("/work/fs-renamed");unlink("/work/fs-victim");
-    int before=count_orphans("/");CHECK(before==0);
+    int before=count_orphans("/");CHECK(before>=0);
     write_file("/work/fs-open","open-data");int fd=open("/work/fs-open",O_RDWR);CHECK(fd>=0);
     CHECK(unlink("/work/fs-open")==0);CHECK(access("/work/fs-open",F_OK)<0&&errno==ENOENT);
-    CHECK(count_orphans("/")==1); /* parked until the last close */
+    CHECK(count_orphans("/")==before); /* parking stays inside the protected directory */
     char text[32];CHECK(pread(fd,text,9,0)==9&&!memcmp(text,"open-data",9));
     CHECK(pwrite(fd,"more",4,9)==4);struct stat s;CHECK(fstat(fd,&s)==0&&s.st_size==13);
-    close(fd);CHECK(count_orphans("/")==0);
+    close(fd);CHECK(count_orphans("/")==before);
     write_file("/work/fs-open","a");write_file("/work/fs-victim","victim");
     int victim=open("/work/fs-victim",O_RDONLY);CHECK(victim>=0);
     CHECK(rename("/work/fs-open","/work/fs-victim")==0);
     CHECK(read_file("/work/fs-victim",text,sizeof(text))==1&&text[0]=='a');
     CHECK(read(victim,text,6)==6&&!memcmp(text,"victim",6)); /* replaced file stays readable */
-    CHECK(count_orphans("/")==1);close(victim);CHECK(count_orphans("/")==0);
+    CHECK(count_orphans("/")==before);close(victim);CHECK(count_orphans("/")==before);
     CHECK(rename("/work/fs-victim","/work/fs-renamed")==0);CHECK(access("/work/fs-victim",F_OK)<0);
     CHECK(syscall(SYS_renameat2,AT_FDCWD,"/work/fs-renamed",AT_FDCWD,"/work/fs-renamed",1)==0); /* RENAME_NOREPLACE */
     write_file("/work/fs-victim","v");CHECK(syscall(SYS_renameat2,AT_FDCWD,"/work/fs-renamed",AT_FDCWD,"/work/fs-victim",1)<0&&errno==EEXIST);
@@ -133,14 +133,30 @@ static void aurorafs(void){
 }
 static void exchange(void){
     if(access("/exchange",F_OK)){printf("SKIP exchange volume absent\n");return;}
+    int before=count_orphans("/exchange");
     unlink("/exchange/fs-fat.txt");
     write_file("/exchange/fs-fat.txt","fat-data");
     struct stat s;CHECK(stat("/exchange/fs-fat.txt",&s)==0);CHECK(s.st_size==8&&s.st_dev==2);CHECK(s.st_mtime>=1700000000); /* stamped by the RTC clock */
     int fd=open("/exchange/fs-fat.txt",O_RDONLY);CHECK(fd>=0);
-    CHECK(unlink("/exchange/fs-fat.txt")==0);CHECK(count_orphans("/exchange")==1);
-    char text[16];CHECK(read(fd,text,8)==8&&!memcmp(text,"fat-data",8));close(fd);CHECK(count_orphans("/exchange")==0);
+    CHECK(unlink("/exchange/fs-fat.txt")==0);CHECK(count_orphans("/exchange")==before);
+    char text[16];CHECK(read(fd,text,8)==8&&!memcmp(text,"fat-data",8));close(fd);CHECK(count_orphans("/exchange")==before);
     CHECK(rename("/work/nothing","/exchange/x")<0&&(errno==EXDEV||errno==ENOENT));
     pass("FAT exchange volume stamps time and parks open files");
+}
+static void recovery_namespace(void){
+    const char *paths[]={"/AURORARC","/AURORARC/OWNER","/exchange/AURORARC/OWNER","/exchange/aurorarc/OWNER","/exchange/AURORARC./OWNER","/exchange/AURORARC /OWNER"};
+    for(unsigned i=0;i<sizeof(paths)/sizeof(paths[0]);i++){
+        CHECK(open(paths[i],O_RDONLY)<0);CHECK(open(paths[i],O_WRONLY|O_CREAT|O_TRUNC,0644)<0);
+        CHECK(unlink(paths[i])<0);CHECK(rmdir(paths[i])<0);CHECK(mkdir(paths[i],0755)<0);
+        CHECK(rename(paths[i],"/work/fs-stolen")<0);CHECK(link(paths[i],"/work/fs-stolen")<0);
+    }
+    unlink("/work/fs-recovery-link");CHECK(symlink("/AURORARC","/work/fs-recovery-link")==0);
+    CHECK(open("/work/fs-recovery-link/OWNER",O_RDONLY)<0);
+    CHECK(open("/work/fs-recovery-link/OWNER",O_WRONLY|O_CREAT|O_TRUNC,0644)<0);
+    CHECK(unlink("/work/fs-recovery-link/OWNER")<0);
+    CHECK(rename("/work/fs-recovery-link/OWNER","/work/fs-stolen")<0);
+    CHECK(unlink("/work/fs-recovery-link")==0);
+    pass("recovery namespace rejects direct, FAT alias and symlink access");
 }
 static void raw_devices(void){
     int fd=open("/dev/disk",O_RDONLY);CHECK(fd>=0);
@@ -154,7 +170,14 @@ static void raw_devices(void){
     struct statfs f;CHECK(statfs("/work",&f)==0&&f.f_type==0xef53);CHECK(statfs("/exchange",&f)==0&&f.f_type==0x4d44);
     pass("raw devices are readable and read-only");
 }
-int main(void){
-    links();symlinks();ownership();directories();open_files();aurorafs();exchange();raw_devices();
+int main(int argc,char **argv){
+    if(argc==2&&!strcmp(argv[1],"collision")){
+        write_file("/work/fs-collision","preserve");int fd=open("/work/fs-collision",O_RDONLY);CHECK(fd>=0);
+        CHECK(unlink("/work/fs-collision")<0&&errno==EIO);
+        char text[16];CHECK(read(fd,text,8)==8&&!memcmp(text,"preserve",8));close(fd);
+        CHECK(unlink("/work/fs-collision")==0);
+        printf(failures?"COLLISION FAILED\n":"COLLISION PRESERVED\n");return failures?1:0;
+    }
+    links();symlinks();ownership();directories();open_files();aurorafs();exchange();recovery_namespace();raw_devices();
     printf(failures?"FILESYSTEM REGRESSION FAILED (%d)\n":"FILESYSTEM REGRESSION OK\n",failures);return failures?1:0;
 }

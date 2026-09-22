@@ -1,14 +1,20 @@
-# Aurora: 20 remaining action items
+# Aurora: implementation status and next steps
 
-Updated 2026-09-18. This replaces the earlier list. Status for items 1–4 is recorded below; the remaining entries are planned work. Retain Aurora's original kernel, ext2 for
+Updated 2026-09-22. The original 20 items retain their numbering. Items 1-6
+have working implementations with the limits below; items 7-20 are partial or
+planned work. Retain Aurora's original kernel, ext2 for
 development, FAT32 for exchange, and the preference for reusable GNU code.
 The 2026-09-18 platform work is described in [PLATFORM.md](PLATFORM.md) and
 verified by `test-platform.py`.
 
 Already demonstrated: native GCC builds applications; GNU Make rebuilds and
 installs itself from a preconfigured source tree; Bash, GNU text pipelines and
-compressed archives work; GPT/ext2/FAT32 pass independent checks. The priority
-now is downloading, configuring, compiling and installing source inside Aurora.
+compressed archives work; GPT/ext2/FAT32 pass independent checks. VirtIO-net,
+IPv4 client sockets, DNS and verified HTTPS downloads work without a host
+download bridge. curl and Mbed TLS can be rebuilt from prepared trees inside
+Aurora. The next integration milestone is a pinned source download followed by
+native configure, compile, test and staged installation, without imported
+configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
 
 1. **Extend interrupt-driven storage.** Implemented: VirtIO IRQ completion,
    MSI-X/MSI/INTx routing, bounded DMA buffers, sleeping callers, timeout handling
@@ -29,8 +35,11 @@ now is downloading, configuring, compiling and installing source inside Aurora.
    interval timers and `alarm`, `WCONTINUED`/`waitid`, `TOSTOP`, and the
    build-critical calls `link`, `truncate`, `fallocate`, `flock`, `statfs`,
    `msync`/`mlock`, `times`, `prctl`, `setrlimit`, priorities, `sched_*` and
-   `membarrier`. Remaining: PTYs and full job-control terminal semantics, broader
-   pthread APIs (cancellation, barriers) and upstream configure coverage. See
+   `membarrier`. Remaining: real cross-process `flock` exclusion, enforced
+   resource limits and fuller scheduling semantics (some calls currently
+   acknowledge requests without implementing their effects), PTYs and full job-control terminal
+   semantics, broader pthread APIs (cancellation, barriers) and upstream
+   configure coverage. See
    [multicore/dynamic linking](SMP-DYNAMIC.md) and [earlier validation](THREADS.md).
 3. **Scale process memory further.** Implemented: 512 MiB address spaces,
    reference-counted pages, copy-on-write fork, shared anonymous mappings and
@@ -52,15 +61,31 @@ now is downloading, configuring, compiling and installing source inside Aurora.
    AuroraFS checker compiled and run inside Aurora. `test-filesystems.py` cuts
    power during a metadata-heavy workload, reboots, verifies `fsync`ed data and
    orphan reclaim, damages both GPT copies and runs the checker after each step.
+   Hardened 2026-09-22: GPT geometry is bounded by device capacity, all used
+   partitions are checked for overlap, conflicting valid copies are rejected,
+   and repair flushes the table before publishing the header. Repair errors
+   prevent mounting. ext2/FAT32 orphan parking uses protected, marked `AURORARC`
+   directories; old root filename lookalikes are preserved. ext2 dirty markers
+   must be durable before mutation, data is flushed before clean markers, and
+   marker/flush failures block further writes in that session.
    Remaining: an ext2 journal or ordered metadata writes (uncommitted data still
    depends on `sync`), FAT32 dirty-bit handling, and a repairing mode for the
    checker. See [FILESYSTEMS.md](FILESYSTEMS.md).
-5. **Networking.** Start with VirtIO networking, sockets, Ethernet, ARP, IPv4,
-   ICMP, UDP/TCP, DHCP and DNS. Evaluate reusable protocol-stack code. Demonstrate
-   connections originating in Aurora without a host download bridge.
-6. **Verified HTTPS downloads.** Port a maintained TLS library and curl or GNU
-   Wget. Supply entropy, time, CA certificates and checksum/signature verification.
-   Download a pinned source archive directly into `/src` inside Aurora.
+5. **Networking.** Implemented for IPv4 clients in QEMU TCG: transitional
+   VirtIO-net, pinned lwIP 2.2.1, Ethernet/ARP/ICMP, TCP/UDP, DHCP, musl DNS,
+   nonblocking sockets, poll/select, descriptor sharing and eventfd. Network
+   processing remains in the kernel under the native compatibility lock.
+   Remaining: listen/accept, Unix-domain sockets, IPv6, DHCP-derived resolver
+   updates, DNS-over-TCP, broader options and physical NIC drivers. See
+   [NETWORK.md](NETWORK.md) and `test-network.py`.
+6. **Verified HTTPS downloads.** Implemented: curl 8.22.0 with Mbed TLS 3.6.7,
+   VirtIO-rng entropy, RTC time, a pinned CA bundle, certificate/hostname/expiry
+   checks, pinned archive downloads and SHA-256 verification. Tests include
+   certificate rejection and compiling source fetched over TLS. Prepared
+   Mbed TLS/curl trees rebuild inside Aurora with `test-network.py --rebuild`;
+   their configure results still originate in the bootstrap environment.
+   Remaining: native configure, integrated download-to-install recipes,
+   signature-verification policy and routine CA/source-lock maintenance.
 7. **Complete GNU build prerequisites.** Add diffutils, patch, m4, Autoconf,
    Automake, Libtool, Bison and Flex, plus Perl/Python and compression tools where
    required. Run configure inside Aurora instead of importing its output.
@@ -97,7 +122,11 @@ now is downloading, configuring, compiling and installing source inside Aurora.
 17. **Sound drivers and audio service.** Start with QEMU-supported Intel HDA or
     VirtIO sound, then playback/recording, mixing, volume and an application API.
     Integrate USB audio after the USB stack is ready.
-18. **AMD Radeon support.** Select a GPU family and reuse suitable upstream
+18. **AMD Radeon support.** Partial: PCI discovery, an RX 7800 XT/RDNA3
+    capability handoff and a display-service command-ring interface exist.
+    Presentation still uses CPU framebuffer copies; GPU command processors
+    and hardware acceleration remain disabled. Select and validate a GPU
+    family and reuse suitable upstream
     Radeon/AMDGPU source and definitions. Supply memory, firmware and
     synchronization interfaces. Bring up display modes and scanout first,
     then acceleration; validate specific hardware rather than all generations.
@@ -110,6 +139,20 @@ now is downloading, configuring, compiling and installing source inside Aurora.
     and later Vulkan once driver interfaces are ready. Evaluate NVK separately
     from the Nouveau kernel-driver port. Test synchronization, context isolation,
     GPU reset/recovery and real applications.
+
+## Next milestones
+
+1. Keep storage recovery regressions passing on disposable VirtIO and ATA
+   images, including malformed GPTs, failed writes/flushes and interrupted
+   recovery. `test-recovery.py` exercises the production recovery routines
+   against an in-memory device; `test-filesystems.py` covers guest behavior.
+2. Configure and build GNU Make from a clean archive entirely inside Aurora;
+   retain `config.log`, syscall failures and test output. Add prerequisites
+   needed by the next package, then stage its installation and record ownership.
+3. Improve terminal scrollback/log capture, then PTYs and job control. Measure
+   `make -j1/-j2/-j4`, memory, task limits and lock contention before a GCC rebuild.
+4. Expand the boot bundle budget before adding substantial kernel subsystems:
+   `build.ps1` currently enforces the loader's 240 KiB limit.
 
 ## Reuse and decisions
 

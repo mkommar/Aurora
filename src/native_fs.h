@@ -19,6 +19,7 @@ static int native_raw_disk(u32 sector,void *data,int write) {
 }
 /* Multi-sector ranges become one batched VirtIO submission per 512 KiB. */
 static int native_raw_disk_range(u32 sector,void *data,u32 count,int write){
+    if(sector>=native_disk_sectors||count>native_disk_sectors-sector||sector>=0x10000000||count>0x10000000-sector)return 0;
     for(u32 done=0;done<count;){u32 n=count-done;
         if(virtio_present){u32 limit=virtio_slots*VIRTIO_SLOT_SECTORS;if(n>limit)n=limit;if(!virtio_transfer(sector+done,(u8 *)data+(u64)done*512,n,write?1:0))return 0;}
         else{n=1;if(!native_raw_disk(sector+done,(u8 *)data+(u64)done*512,write))return 0;}

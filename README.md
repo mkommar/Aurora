@@ -37,11 +37,12 @@ Legacy and native processes now share one filesystem namespace (AuroraFS at
 timestamps are stored, crash orphans are reclaimed at mount, a damaged GPT
 copy is recovered from the other one, and `fsck-aurora` checks GPT, ext2,
 FAT32 and AuroraFS from inside Aurora; see [FILESYSTEMS.md](FILESYSTEMS.md)
-and `python test-filesystems.py`, which cuts power mid-write and verifies
-recovery.
+and `python test-filesystems.py`, which tests power-cut recovery and preservation of ordinary files.
+`python test-recovery.py` injects GPT and ext2 recovery I/O failures on a host
+in-memory device; see [recovery guarantees and limits](FILESYSTEMS.md).
 
-See the updated [20-item roadmap](ROADMAP.md) for remaining work, including
-network downloads, native source builds, USB, GTK, sound, Radeon and Nouveau.
+See the updated [20-item roadmap](ROADMAP.md) for implementation status and remaining work,
+including native configure/build/install, USB, GTK, sound, Radeon and Nouveau.
 
 ```powershell
 .\run.ps1 -NoBuild       # Boot build/aurora.img
@@ -90,10 +91,12 @@ Compile and install your own application while QEMU is stopped:
 See [SDK guide](sdk/README.md) for an example, supported C functions, and limits.
 The SDK path compiles on Windows. The optional native GCC environment compiles
 inside Aurora using a separate compatibility ABI and development volume.
-Filesystem limits are 32 files, 64 KiB per file, and a flat directory. Builds
-preserve existing files while refreshing the bundled examples. Disk I/O is
-synchronous ATA PIO inside the kernel in this first implementation; moving it to
-a separate storage service is future work.
+AuroraFS limits are 32 files, 64 KiB per file, and a flat directory; the
+ext2/FAT32 development volumes have separate limits. Builds
+preserve existing files while refreshing the bundled examples. Storage remains
+in the kernel: ATA uses IRQ14 after scheduling starts, and
+VirtIO block I/O uses batched requests and interrupt completion. Moving storage
+to a separate service with DMA isolation is future work.
 
 ## What changed from 0.1
 
@@ -192,7 +195,7 @@ This is a small OS with microkernel-style service isolation and an initial
 in-kernel storage implementation. Native applications use a BIOS-backed page
 allocator and musl's dynamic linker. The development profile includes VirtIO-net,
 IPv4/DHCP, DNS, and curl with verified TLS; see [NETWORK.md](NETWORK.md).
-Automatic service restart remains unimplemented. Radeon PCI display controllers are detected at boot; known-safe hardware uses the aligned accelerated scanout path while unknown hardware keeps the VBE framebuffer fallback. Generation-specific Radeon command processors are not enabled yet. The separate SDK runtime supplies a fixed 128 KiB heap. The terminal and notes
+Automatic service restart remains unimplemented. Radeon PCI display controllers are detected at boot; the selected RX 7800 XT path uses aligned CPU framebuffer copies while unknown hardware keeps the VBE framebuffer fallback. Generation-specific Radeon command processors are not enabled yet. The separate SDK runtime supplies a fixed 128 KiB heap. The terminal and notes
 share the desktop process. Scheduling is
 preemptive, but PS/2 input still uses polling and can consume a host CPU core.
 It targets BIOS QEMU with one to eight CPUs, 128 MiB RAM (1 GiB for GCC) and standard VGA, not UEFI or
@@ -216,8 +219,8 @@ The generated `build/aurora.iso.json` records the SHA-256 and launch command.
 tools/qemu/qemu-system-x86_64.exe -drive format=raw,file=build/aurora.iso -m 1G -smp 4
 ```
 
-The ISO boots the kernel and desktop by itself. Aurora’s development volume is
-accessed through ATA PIO, so attach the development disk as a second drive when
+The ISO boots the kernel and desktop by itself. Attach the development volume
+as a second disk (VirtIO below; ATA is also supported) when
 you need ext2/FAT32 storage, GCC, or networking tools:
 
 ```powershell

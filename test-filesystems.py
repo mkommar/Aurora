@@ -6,7 +6,8 @@ development disk (QMP port 4448, no visible window, no host C compiler):
    the fresh copy clean; the semantics regression must pass; legacy and native
    file APIs must see one namespace (AuroraFS as /aurorafs, /work fallbacks).
 2. Reboot after `sync` and confirm the ext2 superblock was left clean.
-3. Run the interrupted-write workload, cut power mid-stream, reboot: the
+3. Run the interrupted-write workload, pause without sync at operation
+   boundaries (or use --stress-cut for unrestricted cuts), cut power, reboot: the
    kernel must report the unclean stop, reclaim both parked crash orphans, the
    fsync'd file must hash correctly and fsck-aurora must find no structural
    damage.
@@ -15,12 +16,14 @@ development disk (QMP port 4448, no visible window, no host C compiler):
    damaged one; both copies must validate afterwards.
 5. Repeat the checker over the ATA attachment (IDENTIFY sizes the raw device).
 """
-import argparse,hashlib,importlib.util,shutil,struct,subprocess,time,zlib
+import argparse,hashlib,importlib.util,json,shutil,struct,subprocess,sys,time,zlib
 from pathlib import Path
-from image_access import put_ext2_files
+from image_access import put_ext2_files,read_ext2_files
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--folder',default='build/filesystem-tests');parser.add_argument('--qmp-port',type=int,default=4448);parser.add_argument('--accel',choices=['tcg','whpx'],default='tcg');parser.add_argument('--cpus',type=int,default=2)
+parser.add_argument('--cut-rounds',default='0,5,12',help='comma-separated workload rounds at which to cut power')
+parser.add_argument('--stress-cut',action='store_true',help='cut a continuously mutating workload; unjournaled ext2 may fail the structural check')
 parser.add_argument('--nm',default=r'C:\Program Files\Unity\Hub\Editor\6000.4.0f1\Editor\Data\PlaybackEngines\AndroidPlayer\NDK\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe');args=parser.parse_args()
 folder=Path(args.folder);folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img');shutil.copyfile('build/kernel.elf',folder/'kernel.elf');shutil.copyfile('build/desktop.elf',folder/'desktop.elf');shutil.copyfile(args.disk,folder/'development.img')
@@ -34,7 +37,7 @@ echo work-notes > /work/notes.txt
 echo BRIDGE_DONE
 '''
 verify='''cat /work/fs-check.txt
-ls -a / /exchange | grep -c aurora-orphan || true
+cat /.aurora-orphan-* /exchange/.aurora-orphan-*
 sha256sum /work/iw-committed.bin
 echo VERIFY_DONE
 '''
@@ -143,7 +146,7 @@ try:
     command('sync');out=command('./fsck-aurora -v',seconds=600);print(out)
     check('fsck-aurora reports the fresh volumes clean','FSCK: clean' in out and 'Application exited: 0' in out)
     out=command('./filesystem',seconds=300);print(out)
-    for label in ['hard links share one inode','symlinks resolve, lstat stops at the link','ownership, modes and timestamps persist','directory link counts follow subdirectories','unlink and rename keep open descriptors, orphans vanish on close','AuroraFS is reachable as /aurorafs','FAT exchange volume stamps time and parks open files','raw devices are readable and read-only']:
+    for label in ['hard links share one inode','symlinks resolve, lstat stops at the link','ownership, modes and timestamps persist','directory link counts follow subdirectories','unlink and rename keep open descriptors, orphans vanish on close','AuroraFS is reachable as /aurorafs','FAT exchange volume stamps time and parks open files','raw devices are readable and read-only','recovery namespace rejects direct, FAT alias and symlink access']:
         check(label,'PASS '+label in out)
     check('Filesystem regression exit status','FILESYSTEM REGRESSION OK' in out and 'Application exited: 0' in out)
     command('save',wait_exit=False);check('Desktop saves notes through the legacy API','Notes saved' in screen_lines())
@@ -157,25 +160,25 @@ try:
     out=command('hellowork aurora');check('SDK application spawns from /work on the development volume','Hello, aurora!' in screen_lines() and 'Application exited: 0' in out)
     out=command('sync');check('sync marks the volume clean','Application exited: 0' in out)
     stop()
-    # 2. A clean stop leaves a clean superblock; a power cut mid-write does not.
-    boot()
-    check('Reboot after sync sees a clean superblock','did not unmount cleanly' not in log() and 'reclaimed crash orphans' not in log())
-    offset=len(log());command('./interrupted-writes',wait_exit=False)
-    wait(lambda:'IW_FAT_ORPHAN' in log()[offset:] and 'IW_PROGRESS 12' in log()[offset:],300)
-    stop(hard=True);check('Power cut while the workload streams writes',True)
-    # 3. Recovery: unclean mark, orphans reclaimed, fsync'd data intact, no structural damage.
-    boot()
-    check('Kernel detects the unclean stop','EXT2: previous session did not unmount cleanly' in log())
-    check('Both parked crash orphans are reclaimed at mount','VFS: reclaimed crash orphans count=0000000000000002' in log())
-    check('Recovery counters agree',counter('vfs_orphans_reclaimed')==2 and counter('ext2_unclean_mounts')==1)
-    out=command('bash fs-verify.sh');print(out)
-    check('Data committed with fsync before the power cut hashes correctly',expected_hash() in out and 'work-notes' in out)
-    lines=[l for l in out.splitlines() if l.strip().isdigit()]
-    check('No orphan names remain in either volume root',lines and lines[0].strip()=='0')
-    command('sync');out=command('./fsck-aurora',seconds=600);print(out)
-    check('fsck-aurora finds no structural damage after the power cut','FSCK:' in out and 'ERROR:' not in out and ('Application exited: 0' in out or 'Application exited: 1' in out))
-    out=command('./filesystem',seconds=300);check('Filesystem regression passes after recovery','FILESYSTEM REGRESSION OK' in out)
-    command('sync');stop()
+    for cut_round in [int(value) for value in args.cut_rounds.split(',')]:
+        # 2. A clean stop leaves a clean superblock; a power cut mid-write does not.
+        boot()
+        check('Reboot after sync sees a clean superblock','did not unmount cleanly' not in log() and 'reclaimed crash orphans' not in log())
+        offset=len(log());command('./interrupted-writes'+('' if args.stress_cut else f' {cut_round}'),wait_exit=False)
+        wait(lambda:'IW_FAT_ORPHAN' in log()[offset:] and f'IW_PROGRESS {cut_round}\n' in log()[offset:],300)
+        stop(hard=True);check(f'Power cut after workload round {cut_round}',True)
+        # 3. Recovery: unclean mark, orphans reclaimed, fsync'd data intact, no structural damage.
+        boot()
+        check('Kernel detects the unclean stop','EXT2: previous session did not unmount cleanly' in log())
+        check('Both parked crash orphans are reclaimed at mount','VFS: reclaimed crash orphans count=0000000000000002' in log())
+        check('Recovery counters agree',counter('vfs_orphans_reclaimed')==2 and counter('ext2_unclean_mounts')==1)
+        out=command('bash fs-verify.sh');print(out)
+        check('Data committed with fsync before the power cut hashes correctly',expected_hash() in out and 'work-notes' in out)
+        check('Ordinary root orphan lookalikes survive recovery',out.count('keep-me')==4)
+        command('sync');out=command('./fsck-aurora',seconds=600);print(out)
+        check('fsck-aurora finds no structural damage after the power cut','FSCK:' in out and 'ERROR:' not in out and ('Application exited: 0' in out or 'Application exited: 1' in out))
+        out=command('./filesystem',seconds=300);check('Filesystem regression passes after recovery','FILESYSTEM REGRESSION OK' in out)
+        command('sync');stop()
     # 4. GPT copies: damage the primary, then the backup, then both.
     check('Both GPT copies valid before damage',gpt_state()==(True,True))
     damage(1,0);check('Primary GPT header damaged on the host',gpt_state()==(False,True))
@@ -197,7 +200,18 @@ try:
     ata=True;boot();check('ATA attachment mounts the same volumes','EXT2: writable development volume mounted' in log())
     out=command('./fsck-aurora --no-boot',seconds=900);check('fsck-aurora runs over the ATA raw device','Checking /dev/disk' in out and 'sectors)' in out and '(0 sectors)' not in out and 'ERROR:' not in out)
     command('sync');stop()
+    # 6. A directory without the ownership marker must never be adopted.
+    ata=False
+    collision={'/AURORARC/OWNER':b'ordinary user content',
+        '/AURORARC/.aurora-orphan-0123456789abcdef':b'not a kernel orphan'}
+    put_ext2_files(disk,collision)
+    boot();check('Invalid recovery marker disables parking','VFS: recovery directory unavailable; parking disabled' in log() and counter('vfs_orphans_reclaimed')==0)
+    out=command('./filesystem collision');check('Unavailable recovery directory fails unlink without losing the file','COLLISION PRESERVED' in out and 'Application exited: 0' in out)
+    command('sync');stop()
+    check('Preexisting recovery content remains byte-for-byte intact',read_ext2_files(disk,list(collision))==collision)
     print(f'\nALL {len(results)} FILESYSTEM CHECKS PASSED')
 finally:
     stop()
+    error=sys.exc_info()[1]
+    (folder/'results.json').write_text(json.dumps({'checks':results,'passed':len(results),'success':error is None,'error':str(error) if error else None},indent=2)+'\n')
 

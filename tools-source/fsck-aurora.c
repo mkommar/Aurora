@@ -75,7 +75,7 @@ static int check_gpt(int fd,u64 sectors,Partition *out){
 
 /* --------------------------------------------------------------- ext2 --- */
 typedef struct {int fd;u64 base;u32 block_size,blocks,inodes,per_group,inodes_per_group,first_data,inode_size,groups,gdt_blocks,reserved_gdt;int sparse;
-    u8 *bmap,*imap,*used,*seen;u16 *links;u8 *gdt;u64 orphans,dirs;} Ext2;
+    u8 *bmap,*imap,*used,*seen;u16 *links;u8 *gdt;u64 orphans,dirs;u32 recovery_inode;} Ext2;
 static int bit(const u8 *map,u64 n){return (map[n/8]>>(n%8))&1;}
 static void setbit(u8 *map,u64 n){map[n/8]|=1<<(n%8);}
 static int ext2_read_block(Ext2 *e,u64 block,void *buffer){return readat(e->fd,e->base+block*e->block_size,buffer,e->block_size);}
@@ -105,7 +105,8 @@ static void ext2_visit_dir_block(Ext2 *e,u32 block,u32 inode,void *context){
             else{e->links[target]++;
                 if(dc->first&&index==0&&!(name_len==1&&data[offset+8]=='.'))fail("directory %u: first entry is not '.'",inode);
                 if(dc->first&&index==1&&!(name_len==2&&data[offset+8]=='.'&&data[offset+9]=='.'))fail("directory %u: second entry is not '..'",inode);
-                if(inode==2&&name_len==31&&!memcmp(data+offset+8,".aurora-orphan-",15)){e->orphans++;if(verbose)printf("  orphan pending reclaim: %.31s\n",data+offset+8);}
+                if(inode==2&&name_len==8&&!memcmp(data+offset+8,"AURORARC",8))e->recovery_inode=target;
+                if(inode==e->recovery_inode&&name_len==31&&!memcmp(data+offset+8,".aurora-orphan-",15)){e->orphans++;if(verbose)printf("  orphan pending reclaim: %.31s\n",data+offset+8);}
                 if(!bit(e->imap,target-1))fail("directory %u: entry '%.*s' refers to free inode %u",inode,name_len,data+offset+8,target);
             }
         }
@@ -191,7 +192,7 @@ static int check_ext2(int fd,u64 base,u64 sectors){
         if(le16(d+12)!=fb)warn("group %u free blocks %u, bitmap says %u",g,le16(d+12),fb);
         if(le16(d+14)!=fi)warn("group %u free inodes %u, bitmap says %u",g,le16(d+14),fi);
     }
-    if(e.orphans)warn("%llu crash orphans parked in the root directory await reclaim at the next mount",(unsigned long long)e.orphans);
+    if(e.orphans)warn("%llu entries in the recovery directory await inspection/reclaim at the next mount",(unsigned long long)e.orphans);
     printf("ext2: %llu inodes in use, %llu directories, %llu free blocks, %llu lost blocks, %llu unreferenced inodes\n",(unsigned long long)in_use,(unsigned long long)e.dirs,(unsigned long long)free_blocks,(unsigned long long)lost_blocks,(unsigned long long)unreferenced);
     free(scratch);free(table_data);free(e.gdt);free(e.bmap);free(e.imap);free(e.used);free(e.seen);free(e.links);return 0;
 }
@@ -224,7 +225,7 @@ static void fat_dir(Fat *f,u32 first,int depth,const char *path){
             if(!strcmp(name,".")||!strcmp(name,".."))continue;
             u32 start=le16(e+26)|((u32)le16(e+20)<<16);u32 size=le32(e+28);int is_dir=(e[11]&0x10)!=0;
             char full[600];snprintf(full,sizeof(full),"%s/%s",path,name);
-            if(first==f->root&&!strncmp(name,".aurora-orphan-",15)){f->orphans++;if(verbose)printf("  orphan pending reclaim: %s\n",full);}
+            if(!strcmp(path,"/AURORARC")&&!strncmp(name,".aurora-orphan-",15)){f->orphans++;if(verbose)printf("  orphan pending reclaim: %s\n",full);}
             if(start==0&&(size||is_dir)){fail("%s: no first cluster",full);continue;}
             if(start&&!fat_valid(f,start)){fail("%s: first cluster %u invalid",full,start);continue;}
             if(start)fat_chain(f,start,full,size,is_dir);
@@ -250,7 +251,7 @@ static int check_fat(int fd,u64 base,u64 sectors){
     u32 lost=0,free_clusters=0;for(u32 c=2;c<f.clusters+2;c++){u32 v=fat_next(&f,c);if(!v)free_clusters++;else if(!bit(f.seen,c)&&v!=0x0ffffff7)lost++;}
     if(lost)warn("%u clusters allocated but unreferenced (lost clusters)",lost);
     if(fsinfo&&fsinfo<f.reserved){u8 info[512];if(readat(fd,base+(u64)fsinfo*512,info,512)&&le32(info)==0x41615252){u32 reported=le32(info+488);if(reported!=0xffffffff&&reported!=free_clusters)warn("FSInfo free count %u, FAT says %u",reported,free_clusters);}}
-    if(f.orphans)warn("%llu crash orphans parked in the exchange root await reclaim at the next mount",(unsigned long long)f.orphans);
+    if(f.orphans)warn("%llu entries in the exchange recovery directory await inspection/reclaim at the next mount",(unsigned long long)f.orphans);
     printf("FAT32: %llu files, %llu directories, %u free clusters, %u lost clusters\n",(unsigned long long)f.files,(unsigned long long)f.dirs,free_clusters,lost);
     free(f.fat);free(f.seen);return 0;
 }

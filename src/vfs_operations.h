@@ -82,7 +82,7 @@ static int vfs_empty_directory(const char *path){
 static int vfs_reclaim_one(const char *root){
     char path[256];u32 length=0;int is_dir=0;
     if(fat_ready&&fat_path(root)){DIR dir;FILINFO info;if(f_opendir(&dir,fat_name(root))!=FR_OK)return 0;
-        while(f_readdir(&dir,&info)==FR_OK&&info.fname[0]){u32 n=(u32)ns_length(info.fname);if(vfs_orphan_name(info.fname,n)){length=n;is_dir=(info.fattrib&AM_DIR)!=0;ns_copy(path,root);ns_copy(path+ns_length(root),"/");ns_copy(path+ns_length(root),info.fname);break;}}
+        while(f_readdir(&dir,&info)==FR_OK&&info.fname[0]){u32 n=(u32)ns_length(info.fname);if(vfs_orphan_name(info.fname,n)){length=n;is_dir=(info.fattrib&AM_DIR)!=0;ns_copy(path,root);ns_copy(path+ns_length(root),"/");ns_copy(path+ns_length(root)+1,info.fname);break;}}
         f_closedir(&dir);
     }else if(ext2_ready){ext4_dir dir;if(ext4_dir_open(&dir,root))return 0;const ext4_direntry *entry;
         while((entry=ext4_dir_entry_next(&dir)))if(vfs_orphan_name((const char *)entry->name,entry->name_length)){length=entry->name_length;is_dir=entry->inode_type==2;u64 n=ns_length(root);ns_copy(path,root);path[n++]='/';memcpy(path+n,entry->name,length);path[n+length]=0;break;}
@@ -144,6 +144,8 @@ static int vfs_rename(const char *from,const char *to,u32 flags){
         else{vfs_remove(temporary,target==2);if(old>=0)NFILES[old].kind=0;}}
     vfs_cache_move(from,to);return 0;
 }
-static void vfs_close_deleted(int index){
-    if(*(u32 *)(NFILES[index].pad+8)&&!vfs_open_index(index)){if(!vfs_remove(NFILES[index].path,NFILES[index].kind==2))NFILES[index].kind=0;}
+static int vfs_close_deleted(int index){
+    if(*(u32 *)(NFILES[index].pad+8)&&!vfs_open_index(index)){
+        int error=vfs_remove(NFILES[index].path,NFILES[index].kind==2);if(error)return error;NFILES[index].kind=0;
+    }return 0;
 }

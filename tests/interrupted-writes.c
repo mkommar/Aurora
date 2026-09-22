@@ -13,12 +13,19 @@
 static unsigned char block[4096];
 static void fill(unsigned seed){for(unsigned i=0;i<sizeof(block);i++){seed=seed*1103515245u+12345u;block[i]=(unsigned char)(seed>>16);}}
 static int write_all(int fd,const void *data,size_t size){const unsigned char *p=data;while(size){ssize_t n=write(fd,p,size);if(n<=0)return 0;p+=n;size-=n;}return 1;}
-int main(void){
+int main(int argc,char **argv){
+    /* Optional deterministic cut point: stop after the completed mutation,
+     * without sync, so the harness cannot accidentally cut the next syscall.
+     * No argument retains the unrestricted mid-operation stress workload. */
+    unsigned cut=argc>1?(unsigned)strtoul(argv[1],0,10):~0U;
     setvbuf(stdout,0,_IONBF,0);
     int fd=open("/work/iw-committed.bin",O_WRONLY|O_CREAT|O_TRUNC,0644);if(fd<0){perror("committed");return 1;}
     for(unsigned i=0;i<256;i++){fill(i+1);if(!write_all(fd,block,sizeof(block))){perror("write");return 1;}}
     if(fsync(fd)){perror("fsync");return 1;}close(fd);
     printf("IW_COMMITTED\n");
+    const char *lookalikes[]={"/.aurora-orphan-0123456789abcdef","/.aurora-orphan-nothexnothexhere!","/exchange/.aurora-orphan-0123456789abcdef","/exchange/.aurora-orphan-nothexnothexhere!"};
+    for(unsigned i=0;i<4;i++){int keep=open(lookalikes[i],O_WRONLY|O_CREAT|O_TRUNC,0644);if(keep<0||!write_all(keep,"keep-me\n",8)||fsync(keep)){perror("lookalike");return 1;}close(keep);}
+
     int orphan=open("/work/iw-orphan.bin",O_RDWR|O_CREAT|O_TRUNC,0644);if(orphan<0){perror("orphan");return 1;}
     fill(77);write_all(orphan,block,sizeof(block));if(unlink("/work/iw-orphan.bin")){perror("unlink");return 1;}
     printf("IW_ORPHAN\n");
@@ -36,5 +43,6 @@ int main(void){
         write_all(orphan,block,sizeof(block));
         if(fat>=0)write_all(fat,block,sizeof(block));
         printf("IW_PROGRESS %u\n",round);
+        if(round==cut)for(;;)pause();
     }
 }

@@ -43,4 +43,9 @@ __declspec(dllexport) int au_put(const char *path,const void *data,uint64_t size
     if(done!=size)return 5;return ext4_mode_set(path,mode);
 }
 __declspec(dllexport) int au_symlink(const char *path,const char *target){return ext4_fsymlink(target,path);}
-__declspec(dllexport) int au_close(void){int r=ext4_cache_flush("/");int close=ext4_umount("/");return r?r:close;}
+__declspec(dllexport) int au_close(void){
+    int r=ext4_cache_flush("/"),close=ext4_umount("/");
+    /* A subsequent staging/read pass in the same host process must be able
+     * to register this device again. Do not unregister a failed unmount. */
+    int unregister=close?0:ext4_device_unregister("image");return r?r:close?close:unregister;
+}

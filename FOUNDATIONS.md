@@ -35,7 +35,7 @@ continue to use AuroraFS on the boot disk through their original ABI.
 
 | Step | Working implementation | Remaining work |
 | --- | --- | --- |
-| Processes and syscalls | Fork/exec/wait, shared open descriptions, descriptor flags, pipes, basic signal handlers/masks/return, process groups, poll/select/pselect, musl pthreads/futexes, multicore and musl dynamic linking | Full POSIX signals, finer native kernel locks and comprehensive job control |
+| Processes and syscalls | Fork/exec/wait, shared open descriptions, descriptor flags, pipes, basic signal handlers/masks/return, process groups, poll/select/pselect, musl pthreads/futexes, multicore and musl dynamic linking | Broader POSIX semantics, finer native kernel locks and comprehensive job control |
 | Memory | BIOS E820 discovery, allocated physical pages, reclamation on unmap/exit, growable brk/mmap, 512 MiB virtual spaces, copy-on-write fork and shared thread address spaces | Paging to disk, scalable page-table allocation and broader OOM testing |
 | Filesystem namespace | Directories, relative descriptors, symlinks, hard links with real link counts, rename/replacement, deletion, modes, stored owners, three timestamps, directory enumeration, one namespace for legacy and native processes (`/aurorafs`, `/work` fallback), crash orphan reclaim at mount | Permission enforcement across users, extended attributes |
 | Block I/O | PCI discovery, transitional VirtIO DMA queue with eight batched in-flight chains, MSI-X/MSI/INTx routing, interrupt-driven ATA (IRQ14) for the boot and development volumes, blocked callers, timeout and device flush | IOMMU, user-space storage service; only early boot still polls |
@@ -46,7 +46,7 @@ continue to use AuroraFS on the boot disk through their original ABI.
 Native processes have a 512 MiB virtual range and a guarded 2 MiB stack.
 There are 29 application/thread slots (13 shared with legacy applications plus
 16 native-only), 64 descriptors per process, 1,024 open descriptions, 64 pipes
-and 4,096 cached native paths. Physical pages come from usable E820 memory
+and 16,384 cached native paths. Physical pages come from usable E820 memory
 between 256 MiB and 1 GiB and are committed to anonymous mappings on first
 touch. Fork shares private pages copy-on-write and preserves anonymous shared mappings.
 Threads share a page-table root, heap, descriptor table, cwd and umask, with
@@ -57,16 +57,18 @@ their mask through `rt_sigreturn`, and receive fault addresses; interval timers,
 `sigsuspend`/`sigtimedwait`/`sigqueue` and `WCONTINUED`/`waitid` work. See
 [PLATFORM.md](PLATFORM.md). The filesystem stores owners but every process
 runs as one synthetic user, so ownership is not enforced. Open ext2 and FAT32
-files survive unlink through parked orphan names; the next mount reclaims any
-left behind by an abrupt shutdown, and the ext2 superblock records whether the
-previous session stopped cleanly. FAT32 has more limited Unix metadata
+files survive unlink through names parked in protected `AURORARC` recovery
+directories; the next mount reclaims those left behind by an abrupt shutdown.
+Ordinary root filename lookalikes are preserved. The ext2 superblock records
+whether the previous session stopped cleanly. FAT32 has more limited Unix metadata
 semantics. See [FILESYSTEMS.md](FILESYSTEMS.md) for the namespace, recovery
 behaviour and the in-Aurora checker.
 
-Networking is not implemented in Aurora. Source archives are already in `/src`;
-downloading additional sources inside Aurora still requires a network stack,
-NIC driver, DNS and an HTTP/TLS client. The Linux VM's networking belongs only
-to the temporary bootstrap environment.
+Networking and verified HTTPS downloads are implemented for IPv4 clients in
+QEMU TCG, using VirtIO-net, lwIP, musl DNS, curl and Mbed TLS. The guest can
+download and verify pinned source archives directly. See [NETWORK.md](NETWORK.md)
+for validation and remaining network limits. Running upstream configure scripts
+inside Aurora and packaging complete source builds remain the next milestones.
 
 ## Reproduce the bootstrap
 

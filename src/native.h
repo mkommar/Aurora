@@ -301,7 +301,7 @@ static i64 native_mremap(u32 id,u64 old_address,u64 old_size,u64 new_size,u64 fl
     if(!native_map_pages(id,target+old_size,new_size-old_size,attributes&(WRITE|NX|NATIVE_SHARED),1))return -12;
     return target;
 }
-static void native_close(u32 id,int fd){
+static int native_close(u32 id,int fd){
     NativeFd *f=&native_process[id].fd[fd];
     int file_index=f->kind==1?f->index:-1;
     if(f->description&&native_descriptions[f->description].refs)native_descriptions[f->description].refs--;
@@ -309,7 +309,7 @@ static void native_close(u32 id,int fd){
     if(f->kind==2&&native_pipes[f->index].readers)native_pipes[f->index].readers--;
     if(f->kind==3&&native_pipes[f->index].writers)native_pipes[f->index].writers--;
     memset(f,0,sizeof(*f));
-    if(file_index>=0)vfs_close_deleted(file_index);
+    return file_index>=0?vfs_close_deleted(file_index):0;
 }
 /* Post a signal with siginfo details. SIGKILL and SIGSTOP act immediately;
  * SIGCONT resumes a stopped group and reports it to the parent. Others become
@@ -479,7 +479,7 @@ static i64 native_exec(u32 id,int index){
 static i64 native_spawn(u64 address){
     SpawnRequest *r=user_buffer(current_task,address,sizeof(SpawnRequest),0);if(!r)return ERR_POINTER;
     if(!native_ready)return ERR_NOT_FOUND;if(!name_valid(r->name)||r->args[127])return ERR_NAME;
-    char path[256];native_path(path,"/work",r->name);int index=native_find(path);
+    char path[256];if(!native_path(path,"/work",r->name))return ERR_NAME;int index=native_find(path);
     if(index<0&&ext2_ready){native_path(path,"/usr/local/bin",r->name);index=native_find(path);}
     if(index<0&&ext2_ready){native_path(path,"/usr/bin",r->name);index=native_find(path);}
     if(index<0){native_path(path,"/bin",r->name);index=native_find(path);}
@@ -501,7 +501,7 @@ static i64 native_shell_file(u64 address,int write){
     FileRequest *r=user_buffer(current_task,address,sizeof(FileRequest),0);if(!r)return ERR_POINTER;
     if(!native_ready)return ERR_NOT_FOUND;if(!name_valid(r->name)||r->size>USER_SIZE)return ERR_NAME;
     void *buffer=r->size?user_buffer(current_task,r->buffer,r->size,!write):0;if(r->size&&!buffer)return ERR_POINTER;
-    char path[256];native_path(path,"/work",r->name);int index=native_find(path);
+    char path[256];if(!native_path(path,"/work",r->name))return ERR_NAME;int index=native_find(path);
     if(index<0&&write)index=native_create(path);if(index<0)return ERR_NOT_FOUND;
     if(write){i64 n=native_write(index,0,buffer,r->size);if(n<0)return n;NFILES[index].size=r->size;return native_commit(index)?n:ERR_IO;} /* replace, truncating any previous tail */
     return native_read(index,0,buffer,r->size);
@@ -776,7 +776,7 @@ static Frame *native_dispatch(Frame *f){
     case 0:case 1:result=native_io(a,b,c,n==1);break;
     case 2:case 257:{u64 address=n==2?a:b;u32 flags=n==2?b:c;
         result=native_at_path(n==257?(i64)a:-100,address,path);if(!result)result=native_open(path,flags,n==257?d:c);break;}
-    case 3:if(a>=NATIVE_FDS||!p->fd[a].kind)result=-9;else{native_close(current_task,a);result=0;}break;
+    case 3:result=a>=NATIVE_FDS||!p->fd[a].kind?-9:native_close(current_task,a);break;
     case 4:case 6:case 262:{u64 address=n==262?b:a,target=n==262?c:b;
         result=native_at_path(n==262?(i64)a:-100,address,path);if(result)break;int index;
         if(ext2_ready&&!native_foreign(path)&&(n==6||(n==262&&(d&256)))){char resolved[256];result=ext2_resolve(resolved,path,0);if(result)break;
