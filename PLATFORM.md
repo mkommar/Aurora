@@ -39,9 +39,20 @@ kernel remains Aurora's own; nothing here imports Linux code.
 - **Build-critical syscalls.** `link`/`linkat`, `truncate`, `fallocate`,
   `flock`, `statfs`/`fstatfs`, `msync`, `mlock`/`munlock`/`mlockall`,
   `times`, `prctl` (`PR_SET_NAME`/`PR_GET_NAME` and common queries),
-  `setrlimit`/`prlimit`, `getpriority`/`setpriority`, the `sched_*` family and
+  `setrlimit`/`getrlimit`/`prlimit` for `RLIMIT_NOFILE`, `getpriority`/`setpriority`, the `sched_*` family and
   `membarrier`. musl's `sched_getscheduler`/`sched_getparam` wrappers return
   `ENOSYS` on their own; the raw syscalls succeed.
+
+- **File-descriptor limit.** Native processes start with a soft and hard
+  `RLIMIT_NOFILE` of 64, matching the fixed descriptor-table capacity. The
+  supported `getrlimit`, `setrlimit` and `prlimit64` paths validate
+  `soft <= hard`, permit only lowering the hard limit (Aurora has no privilege
+  transition that can raise it), and enforce the soft limit for open, pipe,
+  socket, eventfd, `dup*` and `F_DUPFD*` allocation. Existing descriptors stay
+  usable after a reduction; newly requested descriptors at or above the limit
+  fail without consuming a slot. Limits are copied by fork/exec and shared by
+  Aurora's native threads. Other resource numbers retain their existing
+  bounded/advisory behavior and are not represented as Linux host limits.
 
 ## Process memory
 

@@ -35,6 +35,7 @@ typedef struct {
     u32 fd_owner,signal_owner,fs_owner,tgid;u64 clear_tid,robust_head;int thread;
     u64 restore_mask;int restore_mask_valid;
     u64 timer_deadline[3],timer_interval[3];char name[16];
+    u64 nofile_soft,nofile_hard;
 } NativeProcess;
 #define native_process ((NativeProcess *)(KERNEL_STATE+0x30000))
 #define native_fd_tables ((NativeFd (*)[NATIVE_FDS])(KERNEL_STATE+0x20000))
@@ -434,7 +435,7 @@ static void native_defaults(u32 id){
     memset(&native_process[id],0,sizeof(NativeProcess));NativeProcess *p=&native_process[id];
     p->fd=native_fd_tables[id];memset(p->fd,0,sizeof(native_fd_tables[id]));p->fd_owner=p->signal_owner=p->fs_owner=id;p->tgid=id+100;native_fd_users[id]=native_group_refs[id]=1;
     p->parent=-1;p->vfork_parent=-1;p->umask=022;ns_copy(p->cwd,"/work");
-    p->pgid=p->sid=id+100;memset(native_signals(id),0,sizeof(NativeSignals));
+    p->pgid=p->sid=id+100;memset(native_signals(id),0,sizeof(NativeSignals));p->nofile_soft=p->nofile_hard=NATIVE_FDS;
     memset(NATIVE_TTY,0,sizeof(NativeTty));NATIVE_TTY->foreground=id+100;NATIVE_TTY->root=id;
     *(u32 *)NATIVE_TTY->termios=0x100;*(u32 *)(NATIVE_TTY->termios+4)=5;*(u32 *)(NATIVE_TTY->termios+8)=0xbf;*(u32 *)(NATIVE_TTY->termios+12)=0x3b;
     NATIVE_TTY->termios[17]=3;NATIVE_TTY->termios[18]=28;NATIVE_TTY->termios[19]=127;NATIVE_TTY->termios[20]=21;NATIVE_TTY->termios[21]=4;NATIVE_TTY->termios[23]=1;NATIVE_TTY->termios[27]=26;
@@ -619,7 +620,14 @@ static i64 native_remove_directory(const char *path){
     }
     for(u32 i=0;i<native_count;i++)if(ns_equal(NFILES[i].path,path))NFILES[i].kind=0;return 0;
 }
-static int native_fd_allocate(void){for(int i=0;i<NATIVE_FDS;i++)if(!native_process[current_task].fd[i].kind)return i;return -24;}
+static NativeProcess *native_limits(u32 id){return &native_process[native_process[id].fd_owner];}
+static int native_fd_allocate_from(int minimum){
+    NativeProcess *p=&native_process[current_task];NativeProcess *limits=native_limits(current_task);
+    if(minimum<0)minimum=0;if((u64)minimum>=limits->nofile_soft)return -24;
+    for(int i=minimum;i<NATIVE_FDS&&i<(int)limits->nofile_soft;i++)if(!p->fd[i].kind)return i;
+    return -24;
+}
+static int native_fd_allocate(void){return native_fd_allocate_from(0);}
 static i64 native_open(const char *path,u32 flags,u32 mode){
     NativeProcess *p=&native_process[current_task];int fd=native_fd_allocate();if(fd<0)return fd;
     if(ns_equal(path,"/dev/urandom")||ns_equal(path,"/dev/random")){
@@ -906,7 +914,10 @@ static Frame *native_dispatch(Frame *f){
         else if(a==16){char *out=native_buffer(current_task,b,16,1);if(!out){result=-14;break;}memcpy(out,p->name,16);result=0;}
         else if(a==1||a==38||a==22){result=0;}else if(a==2||a==39){u32 *out=native_buffer(current_task,b,4,1);if(!out){result=-14;break;}*out=0;result=0;}
         else if(a==0x53564d41)result=0;else result=-22;break;
-    case 160:{if(a>=16){result=-22;break;}u64 *in=native_buffer(current_task,b,16,0);result=in?0:-14;break;} /* limits are advisory */
+    case 160:{
+        if(a>=16){result=-22;break;}u64 *in=native_buffer(current_task,b,16,0);if(!in){result=-14;break;}
+        if(a==7){NativeProcess *limits=native_limits(current_task);if(in[0]>in[1]||in[1]>limits->nofile_hard){result=-22;break;}limits->nofile_soft=in[0];limits->nofile_hard=in[1];}
+        result=0;break;}
     case 324:result=a==0?0x7f:(a&~0x7fULL)?-22:0;break;
     case 14:if(d!=8){result=-22;break;}if(c){u64 *out=native_buffer(current_task,c,8,1);if(!out){result=-14;break;}*out=p->sigmask;}
         if(b){u64 *in=native_buffer(current_task,b,8,0);if(!in){result=-14;break;}if(a==0)p->sigmask|=*in;else if(a==1)p->sigmask&=~*in;else if(a==2)p->sigmask=*in;else{result=-22;break;}}p->sigmask&=~((1ULL<<8)|(1ULL<<18));result=0;break;
@@ -951,8 +962,8 @@ static Frame *native_dispatch(Frame *f){
         break;}
     case 28:result=0;break; /* madvise: advisory only */
     case 32:case 33:case 292:{if(a>=NATIVE_FDS||!p->fd[a].kind){result=-9;break;}int fd=n==32?native_fd_allocate():(int)b;
-        if(n==292&&(a==b||(c&~0x80000ULL))){result=-22;break;}
-        if(fd<0||fd>=NATIVE_FDS){result=-9;break;}if((u64)fd!=a){native_close(current_task,fd);p->fd[fd]=p->fd[a];p->fd[fd].flags&=~0x80000U;
+         if(n==292&&(a==b||(c&~0x80000ULL))){result=-22;break;}
+         if(fd<0||fd>=NATIVE_FDS){result=n==32?-24:-22;break;}if((u64)fd>=native_limits(current_task)->nofile_soft){result=-24;break;}if((u64)fd!=a){native_close(current_task,fd);p->fd[fd]=p->fd[a];p->fd[fd].flags&=~0x80000U;
             native_descriptions[p->fd[fd].description].refs++;
             if(n==292)p->fd[fd].flags|=(u32)c;if(p->fd[fd].kind==2)native_pipes[p->fd[fd].index].readers++;if(p->fd[fd].kind==3)native_pipes[p->fd[fd].index].writers++;}result=fd;break;}
     case 39:result=p->tgid;break;
@@ -1007,8 +1018,8 @@ static Frame *native_dispatch(Frame *f){
         else if(b==4){NativeDescription *of=&native_descriptions[p->fd[a].description];of->flags=(of->flags&~0xc00U)|(c&0xc00);result=0;}
         else if(b==5||b==6||b==7)result=native_lock_call(72,a,b,c);
         else if(b==1031||b==1032){if(p->fd[a].kind!=2&&p->fd[a].kind!=3)result=-22;else result=b==1031&&c>NATIVE_PIPE_CAPACITY?-1:NATIVE_PIPE_CAPACITY;}
-        else if(b==0||b==1030){if(c>=NATIVE_FDS){result=-22;break;}int fd;
-            for(fd=(int)c;fd<NATIVE_FDS&&p->fd[fd].kind;fd++){}if(fd==NATIVE_FDS){result=-24;break;}
+        else if(b==0||b==1030){if(c>=NATIVE_FDS||c>=native_limits(current_task)->nofile_soft){result=-22;break;}int fd;
+            for(fd=(int)c;fd<NATIVE_FDS&&fd<(int)native_limits(current_task)->nofile_soft&&p->fd[fd].kind;fd++){}if(fd==NATIVE_FDS||fd>=(int)native_limits(current_task)->nofile_soft){result=-24;break;}
             p->fd[fd]=p->fd[a];p->fd[fd].flags=b==1030?0x80000:0;native_descriptions[p->fd[fd].description].refs++;
             if(p->fd[fd].kind==2)native_pipes[p->fd[fd].index].readers++;if(p->fd[fd].kind==3)native_pipes[p->fd[fd].index].writers++;result=fd;
         }else result=-22;break;
@@ -1090,8 +1101,14 @@ static Frame *native_dispatch(Frame *f){
             if(n==132){atime=(u32)times[0];mtime=(u32)times[1];}else{if(times[1]>=1000000||times[3]>=1000000){result=-22;break;}atime=(u32)times[0];mtime=(u32)times[2];}}
         result=-ext4_atime_set(NFILES[index].path,atime);if(!result)result=-ext4_mtime_set(NFILES[index].path,mtime);if(!result)result=-ext4_ctime_set(NFILES[index].path,native_timestamp());break;}
     case 97:case 302:{u64 target=n==97?b:d;u64 resource=n==97?a:b;if(resource>=16){result=-22;break;}
-        if(n==302&&c&&!native_buffer(current_task,c,16,0)){result=-14;break;}
-        if(target){u64 *out=native_buffer(current_task,target,16,1);if(!out){result=-14;break;}out[0]=out[1]=resource==3?0x200000:resource==7?NATIVE_FDS:~0ULL;}result=0;break;}
+         if(n==302&&c&&!native_buffer(current_task,c,16,0)){result=-14;break;}
+         NativeProcess *limits=native_limits(current_task);if(n==302&&a&&a!=p->tgid&&a!=current_task+100){result=-3;break;}
+         if(target){u64 *out=native_buffer(current_task,target,16,1);if(!out){result=-14;break;}
+             if(resource==7){out[0]=limits->nofile_soft;out[1]=limits->nofile_hard;}
+             else out[0]=out[1]=resource==3?0x200000:~0ULL;}
+         if(n==302&&c){u64 *in=native_buffer(current_task,c,16,0);if(!in){result=-14;break;}
+             if(resource==7){if(in[0]>in[1]||in[1]>limits->nofile_hard){result=-22;break;}limits->nofile_soft=in[0];limits->nofile_hard=in[1];}}
+         result=0;break;}
     case 98:{void *out=native_buffer(current_task,b,144,1);if(!out)result=-14;else{memset(out,0,144);result=0;}break;}
     case 99:{u8 *out=native_buffer(current_task,a,112,1);if(!out){result=-14;break;}memset(out,0,112);*(u64 *)out=timer_ticks/100;
         *(u64 *)(out+32)=NATIVE_SIZE;*(u64 *)(out+40)=NATIVE_SIZE/2;*(u32 *)(out+104)=1;result=0;break;}

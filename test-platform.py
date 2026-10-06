@@ -60,7 +60,7 @@ try:
     boot()
     out=command('gcc -O2 platform.c -o platform');check('Guest builds platform regression','Application exited: 0' in out)
     out=command('./platform',seconds=300)
-    for label in ['nested signal delivery','fault signals with si_addr','sigaltstack','sigsuspend, sigpending, sigtimedwait and sigqueue','interval timers and pause','job control with WCONTINUED and waitid','demand paging and mremap','build-critical syscalls','bulk storage round trip']:
+    for label in ['nested signal delivery','fault signals with si_addr','sigaltstack','sigsuspend, sigpending, sigtimedwait and sigqueue','interval timers and pause','job control with WCONTINUED and waitid','demand paging and mremap','RLIMIT_NOFILE defaults, enforcement, inheritance, duplication boundaries and rollback','build-critical syscalls','bulk storage round trip']:
         check(label,'PASS '+label in out)
     check('Platform regression exit status','Application exited: 0' in out)
     nm=r'C:\Program Files\Unity\Hub\Editor\6000.4.0f1\Editor\Data\PlaybackEngines\AndroidPlayer\NDK\toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe'
