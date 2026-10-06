@@ -22,10 +22,14 @@
 #include <signal.h>
 #include <setjmp.h>
 #include <time.h>
+#include <pthread.h>
 #define CHECK(x) do { if (!(x)) { printf("FAIL line %d: %s errno=%d\n",__LINE__,#x,errno); return 1; } } while(0)
 static volatile sig_atomic_t outer_depth,nested_seen,alarm_count,usr2_count,segv_seen,chld_code,chld_status;
 static volatile void *fault_address;
 static sigjmp_buf recover;
+static void *rlimit_worker(void *unused){
+    (void)unused;struct rlimit limit={6,64};return (void *)(long)setrlimit(RLIMIT_NOFILE,&limit);
+}
 static void nested_inner(int signal,siginfo_t *info,void *context){(void)context;if(signal==SIGUSR2&&outer_depth==1&&(info->si_code==SI_USER||info->si_code==SI_TKILL))nested_seen=1;usr2_count++;}
 static void nested_outer(int signal,siginfo_t *info,void *context){
     (void)signal;(void)info;(void)context;outer_depth=1;raise(SIGUSR2); /* SIGUSR2 is not blocked in this handler: delivered on top of this frame */
@@ -41,7 +45,8 @@ static void alarm_handler(int signal){(void)signal;alarm_count++;}
 static void chld_handler(int signal,siginfo_t *info,void *context){(void)signal;(void)context;chld_code=info->si_code;chld_status=info->si_status;}
 static void mask_probe(int signal){(void)signal;sigset_t now;sigprocmask(SIG_BLOCK,0,&now);nested_seen=sigismember(&now,SIGUSR2)?2:3;}
 int main(int argc,char **argv){
-    (void)argc;(void)argv;
+    if(argc==2&&!strcmp(argv[1],"rlimit-probe")){struct rlimit limit;return getrlimit(RLIMIT_NOFILE,&limit)||limit.rlim_cur!=6||limit.rlim_max!=64;}
+    (void)argv;
     /* Nested delivery: a handler that raises an unblocked signal runs the inner handler before returning. */
     struct sigaction action={0};action.sa_sigaction=nested_outer;action.sa_flags=SA_SIGINFO|SA_NODEFER;sigemptyset(&action.sa_mask);
     CHECK(sigaction(SIGUSR1,&action,0)==0);
@@ -131,6 +136,28 @@ int main(int argc,char **argv){
     CHECK(munmap(lazy,1<<20)==0);
     puts("PASS demand paging and mremap");
     /* Build-critical syscalls used by configure scripts, make and the GNU tool chain. */
+    /* RLIMIT_NOFILE is process state shared by native threads and copied by fork/exec. */
+    for(int descriptor=3;descriptor<64;descriptor++)close(descriptor);
+    struct rlimit original,nofile_limit;CHECK(getrlimit(RLIMIT_NOFILE,&original)==0&&original.rlim_cur==64&&original.rlim_max==64);
+    nofile_limit=(struct rlimit){8,64};CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
+    struct rlimit queried;CHECK(getrlimit(RLIMIT_NOFILE,&queried)==0&&queried.rlim_cur==8&&queried.rlim_max==64);
+    struct rlimit invalid={65,64};CHECK(setrlimit(RLIMIT_NOFILE,&invalid)==-1&&errno==EINVAL);
+    invalid=(struct rlimit){8,65};CHECK(setrlimit(RLIMIT_NOFILE,&invalid)==-1&&errno==EINVAL);
+    int held=open("/work/platform.c",O_RDONLY);CHECK(held>=0&&held<8);nofile_limit.rlim_cur=(rlim_t)held+1;CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
+    char probe;CHECK(read(held,&probe,1)==1);CHECK(open("/work/platform.c",O_RDONLY)==-1&&errno==EMFILE);CHECK(close(held)==0);
+    int rollback[2]={-1,-1};CHECK(pipe(rollback)==-1&&errno==EMFILE);int reused=open("/work/platform.c",O_RDONLY);CHECK(reused==held);CHECK(close(reused)==0);
+    nofile_limit.rlim_cur=8;CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
+    int source=open("/work/platform.c",O_RDONLY),alias=source+1;CHECK(source>=0&&alias<8);CHECK(dup2(source,alias)==alias);
+    CHECK(dup2(source,8)==-1&&errno==EMFILE);CHECK(fcntl(source,F_DUPFD,8)==-1&&errno==EINVAL);
+    CHECK(close(alias)==0&&close(source)==0);
+    nofile_limit=(struct rlimit){6,64};CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
+    pthread_t limit_thread;CHECK(pthread_create(&limit_thread,0,rlimit_worker,0)==0);void *thread_result;CHECK(pthread_join(limit_thread,&thread_result)==0&&thread_result==0);
+    CHECK(getrlimit(RLIMIT_NOFILE,&queried)==0&&queried.rlim_cur==6&&queried.rlim_max==64);
+    pid_t limit_child=fork();CHECK(limit_child>=0);if(!limit_child){execl("/work/platform","platform","rlimit-probe",(char *)0);_exit(127);}
+    CHECK(waitpid(limit_child,&status,0)==limit_child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    CHECK(syscall(SYS_prlimit64,0,RLIMIT_NOFILE,0,&queried)==0&&queried.rlim_cur==6&&queried.rlim_max==64);
+    nofile_limit=(struct rlimit){64,64};CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
+    puts("PASS RLIMIT_NOFILE defaults, enforcement, inheritance, duplication boundaries and rollback");
     int fd=open("/work/platform-a",O_CREAT|O_TRUNC|O_RDWR,0644);CHECK(fd>=0);CHECK(write(fd,"link me",7)==7);
     unlink("/work/platform-b");CHECK(link("/work/platform-a","/work/platform-b")==0);
     CHECK(link("/work/platform-a","/work/platform-b")==-1&&errno==EEXIST);
