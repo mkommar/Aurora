@@ -61,6 +61,21 @@ python setup-native-gcc.py
 .\run.ps1 -NoBuild -NativeGcc
 ```
 
+On Linux, use the portable image/build path and the distro QEMU binary:
+
+```sh
+sudo apt install clang lld llvm nasm qemu-system-x86 python3-pil musl-tools e2fsprogs
+python3 setup-native-gcc.py
+python3 build-linux.py
+python3 test-native-gcc.py --disk build/toolchain.img --cpus 1 --foundations-only
+```
+
+The Linux runner now resolves QEMU from `AURORA_QEMU` or `PATH` and does not
+use Windows process-creation flags. The native-GCC test still exercises the
+compiler inside Aurora; if the guest test times out after compilation, retain
+the serial log because that indicates a guest runtime regression rather than a
+host toolchain setup failure.
+
 Setup downloads an 89 MB archive, verifies the pinned SHA-512, resolves archive
 links in memory, and copies selected file contents into a 512 MiB raw disk. It
 never extracts archive paths onto the host filesystem and refuses to replace an
