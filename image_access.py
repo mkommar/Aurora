@@ -67,7 +67,7 @@ def put_ext2_files(image,files):
                 payload=Path(temporary)/('payload-'+str(len(commands)))
                 payload.write_bytes(data)
                 commands.append(f'write {payload} {path}')
-                if path.endswith('.sh') or path in ('/bin/curl','/work/rebuild-network.sh','/work/platform'):
+                if path.endswith('.sh') or path in ('/bin/curl','/work/rebuild-network.sh','/work/platform','/work/package-locks'):
                     commands.append(f'set_inode_field {path} mode 0100755')
             command_file=Path(temporary)/'debugfs.commands';command_file.write_text('\n'.join(commands)+'\n')
             subprocess.run(['debugfs','-w','-f',str(command_file),str(image)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)

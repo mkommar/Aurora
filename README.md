@@ -173,12 +173,16 @@ debugfs -w -R 'mkdir /work' build/development.img
 musl-gcc -static -O2 -pthread tests/platform.c -o build/platform-musl
 python3 test-platform.py --cpus 1 --platform-binary build/platform-musl \
   --nm "$(command -v llvm-nm)"
+musl-gcc -static -O2 -pthread tests/package-locks.c -o build/package-locks-musl
+python3 test-package-locks.py --folder build/package-lock-tests-linux \
+  --package-binary build/package-locks-musl
 ```
 
 This runs the regression program inside Aurora and proves guest syscall
-behavior, but intentionally does not claim that GCC compiled the test inside
-Aurora. The default command without `--platform-binary` retains the native-GCC
-in-guest compilation check when a prepared development volume is available.
+behavior, including cross-process lock ownership, but intentionally does not
+claim that GCC compiled the tests inside Aurora. The default commands retain
+the native-GCC in-guest compilation check when a prepared development volume
+is available.
 
 Equivalent QEMU command on another machine:
 

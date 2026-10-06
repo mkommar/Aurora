@@ -108,10 +108,13 @@ debugfs -w -R 'mkdir /work' build/development.img
 musl-gcc -static -O2 -pthread tests/platform.c -o build/platform-musl
 python3 test-platform.py --cpus 1 --platform-binary build/platform-musl \
   --nm "$(command -v llvm-nm)"
+musl-gcc -static -O2 -pthread tests/package-locks.c -o build/package-locks-musl
+python3 test-package-locks.py --folder build/package-lock-tests-linux \
+  --package-binary build/package-locks-musl
 ```
 
-The fallback validates the test binary inside Aurora but does not replace the
-default in-guest GCC compilation check.
+The fallback validates both the platform and package-lock binaries inside
+Aurora but does not replace the default in-guest GCC compilation check.
 
 `test-platform.py` stages `tests/platform.c` into a copy of the development
 disk, compiles it with the native GCC inside Aurora and runs it. The program
