@@ -89,6 +89,30 @@ python test-native-gcc.py --virtio --cpus 2
 python test-dynamic-posix.py --virtio --cpus 2
 ```
 
+Linux hosts use the portable builder and PATH-resolved QEMU/LLVM tools:
+
+```sh
+python3 build-linux.py
+python3 test-platform.py --cpus 2 --nm "$(command -v llvm-nm)"
+```
+
+Install `clang`, `lld`, `llvm`, `nasm`, `qemu-system-x86`, `python3`,
+`python3-pil`, `musl-tools` and `e2fsprogs` first. The normal command needs
+`build/development.img` prepared with the native GCC toolchain. For a raw ext2
+fallback that still runs the guest regression, use:
+
+```sh
+truncate -s 512M build/development.img
+mkfs.ext2 -F build/development.img
+debugfs -w -R 'mkdir /work' build/development.img
+musl-gcc -static -O2 -pthread tests/platform.c -o build/platform-musl
+python3 test-platform.py --cpus 1 --platform-binary build/platform-musl \
+  --nm "$(command -v llvm-nm)"
+```
+
+The fallback validates the test binary inside Aurora but does not replace the
+default in-guest GCC compilation check.
+
 `test-platform.py` stages `tests/platform.c` into a copy of the development
 disk, compiles it with the native GCC inside Aurora and runs it. The program
 checks nested and fault signals, `sigaltstack`, signal waits and queues,

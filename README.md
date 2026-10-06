@@ -142,6 +142,44 @@ bundle. The kernel copies the services into distinct private memory at startup.
 The disk image is 16 MiB, and the loader accepts a bundle up to 240 KiB.
 ELF files retain symbols for debugging. Generated files and tools are Git-ignored.
 
+### Linux host
+
+Linux uses the same LLVM/Clang, LLD, NASM and QEMU architecture without
+requiring PowerShell. Install `clang`, `lld`, `llvm`, `nasm`, `qemu-system-x86`,
+`python3`, `python3-pil`, `musl-tools` and `e2fsprogs` from the distribution
+packages, then run:
+
+```sh
+python3 build-linux.py
+python3 test-platform.py --cpus 2 --nm "$(command -v llvm-nm)"
+```
+
+`build-linux.py` writes the same `build/aurora.img`, service ELF files and
+kernel artifacts as `build.ps1`. Set `AURORA_LLVM` to an LLVM bin directory or
+pass `--llvm-bin`; set `AURORA_QEMU` or `AURORA_NM` when the tools are not on
+`PATH`. Linux uses QEMU TCG by default; `--accel whpx` remains available for
+the Windows runner. The platform test needs `build/development.img`, which is
+the prepared native-GCC development volume described in
+[`NATIVE-GCC.md`](NATIVE-GCC.md).
+
+For a Linux-only host-compiled platform regression image when the larger
+native-GCC volume is unavailable, create a raw ext2 development image and
+stage a static musl test binary:
+
+```sh
+truncate -s 512M build/development.img
+mkfs.ext2 -F build/development.img
+debugfs -w -R 'mkdir /work' build/development.img
+musl-gcc -static -O2 -pthread tests/platform.c -o build/platform-musl
+python3 test-platform.py --cpus 1 --platform-binary build/platform-musl \
+  --nm "$(command -v llvm-nm)"
+```
+
+This runs the regression program inside Aurora and proves guest syscall
+behavior, but intentionally does not claim that GCC compiled the test inside
+Aurora. The default command without `--platform-binary` retains the native-GCC
+in-guest compilation check when a prepared development volume is available.
+
 Equivalent QEMU command on another machine:
 
 ```sh

@@ -1,7 +1,7 @@
 """Bounded artifact access to Aurora's existing ext2 GPT partition.
 Reads reject writes; callers stage writes onto copies. Never formats a disk.
 """
-import ctypes as C,struct,zlib,os
+import ctypes as C,struct,zlib,os,subprocess,tempfile
 from pathlib import Path, PurePosixPath
 
 def geometry(disk, lib):
@@ -48,7 +48,31 @@ def read_ext2_files(image,paths):
         return result
 
 def put_ext2_files(image,files):
-    lib=C.CDLL(str(Path(os.environ.get('AURORA_IMAGE_TOOL','build/image-tool/ext2-image.dll')).resolve()))
+    image=Path(image)
+    image_tool=Path(os.environ.get('AURORA_IMAGE_TOOL','build/image-tool/ext2-image.dll')).resolve()
+    if not image_tool.exists() and os.name != 'nt':
+        # Linux development images are raw ext2 files. Use the distro's
+        # debugfs rather than requiring the Windows-only image-tool DLL.
+        with tempfile.TemporaryDirectory() as temporary:
+            commands=[]
+            directories={'/'}
+            for path,data in files.items():
+                canonical=PurePosixPath(path)
+                if not canonical.is_absolute() or '..' in canonical.parts:raise ValueError('Expected an absolute canonical path')
+                for parent in reversed(canonical.parents):
+                    name=str(parent)
+                    if name not in directories:
+                        commands.append(f'mkdir {name}')
+                        directories.add(name)
+                payload=Path(temporary)/('payload-'+str(len(commands)))
+                payload.write_bytes(data)
+                commands.append(f'write {payload} {path}')
+                if path.endswith('.sh') or path in ('/bin/curl','/work/rebuild-network.sh','/work/platform'):
+                    commands.append(f'set_inode_field {path} mode 0100755')
+            command_file=Path(temporary)/'debugfs.commands';command_file.write_text('\n'.join(commands)+'\n')
+            subprocess.run(['debugfs','-w','-f',str(command_file),str(image)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        return
+    lib=C.CDLL(str(image_tool))
     callback_type=C.CFUNCTYPE(C.c_int,C.c_void_p,C.c_uint64,C.c_uint32,C.c_int)
     lib.au_attach.argtypes=[callback_type];lib.au_put.argtypes=[C.c_char_p,C.c_void_p,C.c_uint64,C.c_uint32]
     lib.au_mkdir.argtypes=[C.c_char_p]

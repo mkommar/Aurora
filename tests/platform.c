@@ -137,18 +137,19 @@ int main(int argc,char **argv){
     puts("PASS demand paging and mremap");
     /* Build-critical syscalls used by configure scripts, make and the GNU tool chain. */
     /* RLIMIT_NOFILE is process state shared by native threads and copied by fork/exec. */
+    for(int descriptor=3;descriptor<64;descriptor++)close(descriptor);
     struct rlimit original,nofile_limit;CHECK(getrlimit(RLIMIT_NOFILE,&original)==0&&original.rlim_cur==64&&original.rlim_max==64);
     nofile_limit=(struct rlimit){8,64};CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
     struct rlimit queried;CHECK(getrlimit(RLIMIT_NOFILE,&queried)==0&&queried.rlim_cur==8&&queried.rlim_max==64);
     struct rlimit invalid={65,64};CHECK(setrlimit(RLIMIT_NOFILE,&invalid)==-1&&errno==EINVAL);
     invalid=(struct rlimit){8,65};CHECK(setrlimit(RLIMIT_NOFILE,&invalid)==-1&&errno==EINVAL);
-    int held=open("/dev/null",O_WRONLY);CHECK(held==3);nofile_limit.rlim_cur=4;CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
-    CHECK(write(held,"x",1)==1);CHECK(open("/dev/null",O_WRONLY)==-1&&errno==EMFILE);CHECK(close(held)==0);
-    int rollback[2]={-1,-1};CHECK(pipe(rollback)==-1&&errno==EMFILE);CHECK(open("/dev/null",O_WRONLY)==3);
-    CHECK(close(3)==0);nofile_limit.rlim_cur=6;CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
-    int source=open("/dev/null",O_WRONLY);CHECK(source==3);CHECK(dup2(source,4)==4);
-    CHECK(dup2(source,6)==-1&&errno==EMFILE);CHECK(fcntl(source,F_DUPFD,6)==-1&&errno==EINVAL);
-    CHECK(close(4)==0&&close(source)==0);
+    int held=open("/work/platform.c",O_RDONLY);CHECK(held>=0&&held<8);nofile_limit.rlim_cur=(rlim_t)held+1;CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
+    char probe;CHECK(read(held,&probe,1)==1);CHECK(open("/work/platform.c",O_RDONLY)==-1&&errno==EMFILE);CHECK(close(held)==0);
+    int rollback[2]={-1,-1};CHECK(pipe(rollback)==-1&&errno==EMFILE);int reused=open("/work/platform.c",O_RDONLY);CHECK(reused==held);CHECK(close(reused)==0);
+    nofile_limit.rlim_cur=8;CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
+    int source=open("/work/platform.c",O_RDONLY),alias=source+1;CHECK(source>=0&&alias<8);CHECK(dup2(source,alias)==alias);
+    CHECK(dup2(source,8)==-1&&errno==EMFILE);CHECK(fcntl(source,F_DUPFD,8)==-1&&errno==EINVAL);
+    CHECK(close(alias)==0&&close(source)==0);
     nofile_limit=(struct rlimit){6,64};CHECK(setrlimit(RLIMIT_NOFILE,&nofile_limit)==0);
     pthread_t limit_thread;CHECK(pthread_create(&limit_thread,0,rlimit_worker,0)==0);void *thread_result;CHECK(pthread_join(limit_thread,&thread_result)==0&&thread_result==0);
     CHECK(getrlimit(RLIMIT_NOFILE,&queried)==0&&queried.rlim_cur==6&&queried.rlim_max==64);
