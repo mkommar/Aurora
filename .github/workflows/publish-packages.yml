@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       target_repository:
-        description: Repository receiving gh-pages; blank uses this repository
+        description: Repository receiving gh-pages; defaults to Aurora-packages
         required: false
-        default: ''
+        default: mkommar/Aurora-packages
       package_artifact:
         description: Existing workflow artifact containing Aurora .deb files
         required: false
@@ -56,10 +56,18 @@ jobs:
       - name: Push external gh-pages branch
         if: ${{ inputs.target_repository && inputs.target_repository != github.repository }}
         env:
-          GH_TOKEN: ${{ secrets.AURORA_PAGES_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.AURORA_PAGES_TOKEN }}
           TARGET_REPOSITORY: ${{ inputs.target_repository }}
         run: |
-          git clone --depth 1 --branch gh-pages "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPOSITORY}.git" target
+          test -n "$GH_TOKEN" || { echo 'AURORA_PAGES_TOKEN is required for an external target repository' >&2; exit 1; }
+          git init target
+          git -C target remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPOSITORY}.git"
+          if git -C target ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>&1; then
+            git -C target fetch --depth 1 origin gh-pages
+            git -C target checkout -B gh-pages FETCH_HEAD
+          else
+            git -C target checkout --orphan gh-pages
+          fi
           find target -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           cp -a _site/. target/
           git -C target config user.name github-actions[bot]
