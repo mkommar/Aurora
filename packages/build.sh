@@ -106,6 +106,7 @@ exec 3>&1
         -exec cp '{}' "$stage$prefix/share/doc/$name/" ';'
     cp "$base/sources.lock.json" "$stage$prefix/share/doc/$name/aurora-sources.json"
     cp "$base/build.sh" "$stage$prefix/share/doc/$name/aurora-build.sh"
+    cp "$base/install.sh" "$stage$prefix/share/doc/$name/aurora-install.sh"
     if test -n "${patch_specs:-}"; then
         mkdir "$stage$prefix/share/doc/$name/patches"
         while read -r digest strip filename; do
@@ -138,5 +139,15 @@ exec 3>&1
     mv package.deb "$output"
     cd "$base/out"; sha256sum "aurora-$name"_"$version-1_musl-linux-amd64.deb" > "$name.sha256.partial"
     mv "$name.sha256.partial" "$name.sha256"
+    if test "$name" = make; then
+        bash "$base/install.sh" "$output" "$base/out/$name.sha256"
+        /opt/aurora/bin/make --version | grep -q 'GNU Make 4.4.1'
+        smoke=$base/install-smoke/make-$version
+        mkdir -p "$smoke"
+        printf 'all:\n\tprintf "installed-make-ok\\n" > result\n' > "$smoke/Makefile"
+        /opt/aurora/bin/make -C "$smoke" -B
+        grep -qx installed-make-ok "$smoke/result"
+        echo AURORA_PACKAGE_INSTALL_TEST_PASS
+    fi
 ) > "$log" 2>&1
 echo "AURORA_PACKAGE_BUILT $name $version"

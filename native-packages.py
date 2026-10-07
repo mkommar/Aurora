@@ -37,20 +37,24 @@ def payload(names,retry=False):
     raw=Path('packages/sources.lock.json').read_bytes()
     lock=json.loads(raw)['packages']
     recipe=Path('packages/build.sh').read_bytes()
+    install_recipe=Path('packages/install.sh').read_bytes()
+    recipe_digest=hashlib.sha256(recipe+b'\0'+install_recipe).hexdigest()
     files={'/work/packages-lock.json':raw,'/work/packages-build.sh':recipe}
+    files['/work/packages-install.sh']=install_recipe
     files['/work/packages/repository.sh']=Path('packages/repository.sh').read_bytes()
     files['/etc/resolv.conf']=b'nameserver 10.0.2.3\noptions timeout:2 attempts:2\n'
     for filename in ('compiler-corpus.c','compiler-corpus.sh'):
         files['/work/'+filename]=Path('tests',filename).read_bytes()
     script=['#!/bin/bash','set -eu','mkdir -p /work/packages',
         'cp /work/packages-lock.json /work/packages/sources.lock.json',
-        'cp /work/packages-build.sh /work/packages/build.sh']
+        'cp /work/packages-build.sh /work/packages/build.sh',
+        'cp /work/packages-install.sh /work/packages/install.sh']
     for name in names:
         if not re.fullmatch(r'[a-z0-9+-]+',name) or name not in lock: raise ValueError('Unknown package '+name)
         meta=lock[name]
         if not re.fullmatch(r'[a-f0-9]{64}',meta['sha256']): raise ValueError('Missing SHA-256')
         env={k:meta[k] for k in ('version','archive','url','sha256','license','recipe')}
-        env['recipe_sha256']=hashlib.sha256(recipe).hexdigest()
+        env['recipe_sha256']=recipe_digest
         patches=[]
         for number,patch in enumerate(meta['patches']):
             root=Path('packages').resolve();source=(root/patch['file']).resolve()

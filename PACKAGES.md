@@ -20,12 +20,23 @@ upstream configure script under Aurora's Bash. It retains logs, uses `DESTDIR`,
 and has recipes for creating real Debian binary archives with `ar`, `tar` and
 `gzip`. No host compiler or Linux kernel executes the package build.
 
-The `.deb` recipe records source and recipe hashes, copies license files and the
-source lock, and includes a file list and SHA-256 manifest. Sorted tar entries,
-fixed archive timestamps, deterministic `ar` mode and `gzip -n` remove variable
-archive metadata. Bit-for-bit reproducibility of successive package builds
-still needs testing. Build dependencies are recorded; runtime dependencies need
-to be audited per package before release. This runner is not a dependency solver.
+The `.deb` recipe records source and combined build/install recipe hashes,
+copies license files and the source lock, and includes a file list and SHA-256
+manifest. Sorted tar entries, fixed archive timestamps, deterministic `ar` mode
+and `gzip -n` remove variable archive metadata. Bit-for-bit reproducibility of
+successive package builds still needs testing. Build dependencies are recorded;
+runtime dependencies need to be audited per package before release. This runner
+is not a dependency solver.
+
+The GNU Make recipe now has an initial installer path after package creation.
+`packages/install.sh` verifies the package sidecar hash, exact Debian archive
+members, package identity/architecture, data paths under `/opt/aurora`, the
+package file list, and every installed file hash. It refuses to overwrite an
+existing file, installs the first candidate package under `/opt/aurora`, records
+its file ownership list under `/var/lib/aurora/packages`, and removes files it
+has moved if the install transaction fails. The Make recipe then invokes the
+installed binary and builds a small smoke target. This is a first-package
+installer, not a general dependency-aware package manager or removal system.
 
 Local patches are SHA-256 pinned, verified before staging and again in Aurora,
 applied with GNU patch, and copied into the package's documentation. The musl
@@ -49,6 +60,15 @@ Run these host commands with the development disk stopped:
 python prepare-build-volume.py
 python native-packages.py make
 ```
+
+`python tests/package-install-host.py` builds synthetic Debian archives and
+checks successful install, checksum rejection, duplicate/overwrite refusal,
+preflight collision behavior, install rollback and path traversal rejection.
+The Make package's guest download/configure/build/package/install/smoke flow
+still requires a prepared development image with the bootstrap GNU tools and
+network access. No pinned Make 4.4.1 source archive is currently cached in the
+host workspace, and the latest host fetch attempt failed with `Network is
+unreachable`; a full guest Make package run has not yet been recorded.
 
 The volume preparer refuses existing destinations and grows a **new copy** to
 8 GiB ext2, preserving the FAT32 exchange partition. A temporary Linux VM runs

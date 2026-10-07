@@ -105,13 +105,16 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    path-cache eviction passed a 20,000-path/open-descriptor regression. Validate
    those foundations against the full GCC tree. Keep the bootstrap compiler
    until the replacement passes those gates.
-9. **Reproducible package tooling.** Record source hashes, dependencies, patches,
-   licenses and recipes. Add staged installation, file ownership records,
-   removal and rollback. The native recipe uses real `.deb` archive structure,
-   deterministic archive metadata and `DESTDIR`; complete upstream dpkg and
-   APT-compatible repository tooling, ownership/removal/rollback tests and the
-   download-to-install demonstration. These lifecycle features are not yet
-   implemented. See [PACKAGES.md](PACKAGES.md).
+ 9. **Reproducible package tooling.** Source hashes, dependencies, patches,
+    licenses and recipes are recorded. Native recipes produce deterministic
+    `.deb` archives with `DESTDIR`. An initial Make-only installer checks the
+    package sidecar and installed-file hashes, refuses overwrites, records file
+    ownership and rolls back moved files on failure; host fixtures cover checksum
+    rejection, collisions, rollback and traversal. Remaining: validate the
+    pinned Make download/configure/build/test/package/install/smoke flow inside
+    Aurora, upstream dpkg and APT-compatible repository tooling, and general
+    dependency/removal semantics. The guest Make run is blocked by the uncached
+    source archive and host network egress. See [PACKAGES.md](PACKAGES.md).
 10. **Development terminal and editor.** Add ANSI/VT behavior, scrollback, PTYs,
     Readline, complete job control, multiple terminals and an editor such as
     GNU nano. Make compiler output and source editing practical.
