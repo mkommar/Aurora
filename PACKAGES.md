@@ -50,6 +50,48 @@ dependency checks and removal should use upstream dpkg once its native port is
 validated. An APT-compatible repository and authenticated index policy remain
 follow-up work, rather than a custom installer being presented as APT.
 
+## GitHub Pages distribution
+
+`packages/generate-pages.py` creates a deterministic static distribution tree
+without downloading source archives. It accepts a directory of already-built
+`.deb` files and checks each filename and control record against the source
+lock. The output contains `apt/pool/`, APT metadata at
+`apt/dists/aurora/main/binary-musl-linux-amd64/`, `sources/index.json`, one
+source manifest per locked package, `release-manifest.json`, and `index.html`.
+The release manifest records package sizes and SHA-256 hashes, the source-lock
+hash, and stable paths; it deliberately has no generation timestamp.
+
+Reproduce a local publication with:
+
+```sh
+rm -rf build/aurora-pages
+python3 packages/generate-pages.py --packages build/package-output \
+  --output build/aurora-pages
+python3 -m http.server 8000 --directory build/aurora-pages
+```
+
+The package directory must contain archives named like
+`aurora-make_4.4.1-1_musl-linux-amd64.deb`; the package control fields,
+source-lock version, architecture and package namespace must agree. The
+dedicated Pages URL shape is `https://mkommar.github.io/Aurora-packages/`,
+with the APT release at
+`https://mkommar.github.io/Aurora-packages/apt/dists/aurora/Release`. A
+package download example is
+`curl -fLO https://mkommar.github.io/Aurora-packages/apt/pool/<package>.deb`.
+After adding the release to an authenticated APT configuration, the package
+install example is `apt install aurora-make`.
+The unsigned `Release` hash must be authenticated or replaced by a signed
+release policy before use. `.deb` files are supplied by the package build
+workflow; source archives are not downloaded or mirrored by this generator.
+
+`.github/workflows/publish-packages.yml` accepts a workflow artifact containing
+the `.deb` files and defaults to `mkommar/Aurora-packages`. It bootstraps an
+empty target with an orphan `gh-pages` branch and pushes it using the
+`AURORA_PAGES_TOKEN` secret. Set the input to an empty value only when using
+this repository's Pages deployment instead. The dedicated repository still
+needs Pages enabled for its `gh-pages` branch and a token with write access;
+the generator itself never creates repositories or configures Pages.
+
 ## Reproduction
 
 Run these host commands with the development disk stopped:
@@ -59,6 +101,12 @@ Run these host commands with the development disk stopped:
 .\build-image-tool.ps1
 python prepare-build-volume.py
 python native-packages.py make
+```
+
+The host-only publication and fixture test is:
+
+```sh
+python3 test-package-pages.py
 ```
 
 `python tests/package-install-host.py` builds synthetic Debian archives and

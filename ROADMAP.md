@@ -113,8 +113,13 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
     rejection, collisions, rollback and traversal. Remaining: validate the
     pinned Make download/configure/build/test/package/install/smoke flow inside
     Aurora, upstream dpkg and APT-compatible repository tooling, and general
-    dependency/removal semantics. The guest Make run is blocked by the uncached
-    source archive and host network egress. See [PACKAGES.md](PACKAGES.md).
+    dependency/removal semantics. A deterministic APT/source distribution
+     tree, release manifest, synthetic-fixture test and configurable Pages
+     workflow are implemented; they publish supplied `.deb` files but do not
+     mirror source archives. The guest Make run is blocked by the uncached
+     source archive and host network egress. Full dpkg/APT lifecycle behavior,
+     guest build/install validation and authenticated release policy remain
+     open. See [PACKAGES.md](PACKAGES.md).
 10. **Development terminal and editor.** Add ANSI/VT behavior, scrollback, PTYs,
     Readline, complete job control, multiple terminals and an editor such as
     GNU nano. Make compiler output and source editing practical.

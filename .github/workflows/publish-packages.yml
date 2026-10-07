@@ -1,0 +1,77 @@
+name: Publish Aurora packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_repository:
+        description: Repository receiving gh-pages; defaults to Aurora-packages
+        required: false
+        default: mkommar/Aurora-packages
+      package_artifact:
+        description: Existing workflow artifact containing Aurora .deb files
+        required: false
+        default: package-artifacts
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.package_artifact || 'package-artifacts' }}
+          path: packages/incoming
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: python3 packages/generate-pages.py --packages packages/incoming --output _site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aurora-pages-tree
+          path: _site
+
+  deploy:
+    needs: generate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        if: ${{ !inputs.target_repository || inputs.target_repository == github.repository }}
+        uses: actions/deploy-pages@v4
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.target_repository && inputs.target_repository != github.repository }}
+        with:
+          name: aurora-pages-tree
+          path: _site
+      - name: Push external gh-pages branch
+        if: ${{ inputs.target_repository && inputs.target_repository != github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.AURORA_PAGES_TOKEN }}
+          TARGET_REPOSITORY: ${{ inputs.target_repository }}
+        run: |
+          test -n "$GH_TOKEN" || { echo 'AURORA_PAGES_TOKEN is required for an external target repository' >&2; exit 1; }
+          git init target
+          git -C target remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPOSITORY}.git"
+          if git -C target ls-remote --exit-code origin refs/heads/gh-pages >/dev/null 2>&1; then
+            git -C target fetch --depth 1 origin gh-pages
+            git -C target checkout -B gh-pages FETCH_HEAD
+          else
+            git -C target checkout --orphan gh-pages
+          fi
+          find target -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a _site/. target/
+          git -C target config user.name github-actions[bot]
+          git -C target config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git -C target add --all
+          git -C target diff --cached --quiet || git -C target commit -m 'Publish Aurora packages'
+          git -C target push origin gh-pages
