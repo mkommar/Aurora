@@ -35,6 +35,8 @@ spec=importlib.util.spec_from_file_location('native_packages','native-packages.p
 runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
 files,script=runner.payload(list(packages))
 assert not any(name.endswith(('.tar.gz','.tar.xz','.tgz')) for name in files)
+assert files['/work/packages-install.sh']==Path('packages/install.sh').read_bytes()
+assert 'cp /work/packages-install.sh /work/packages/install.sh' in script
 assert '/work/packages/musl-0.patch' in files
 patch=files['/work/packages/musl-0.patch']
 assert b'SYS_set_tid_address' in patch and b'\r' not in patch
@@ -43,4 +45,6 @@ for invalid in ('../make','make;sync','missing'):
     try:runner.payload([invalid])
     except ValueError:pass
     else:raise AssertionError('Accepted invalid package '+invalid)
+make_env=dict(line.split('=',1) for line in files['/work/package-make.env'].decode().splitlines())
+assert make_env['recipe_sha256']==hashlib.sha256(Path('packages/build.sh').read_bytes()+b'\0'+Path('packages/install.sh').read_bytes()).hexdigest()
 print(f'PASS {len(packages)} package manifests, dependency graph, {count} cached source hashes, patch pins and recipe-only staging')
