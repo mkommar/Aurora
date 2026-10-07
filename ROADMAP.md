@@ -35,7 +35,9 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    interval timers and `alarm`, `WCONTINUED`/`waitid`, `TOSTOP`, and the
    build-critical calls `link`, `truncate`, `fallocate`, `flock`, `statfs`,
    `msync`/`mlock`, `times`, `prctl`, `setrlimit`, priorities, `sched_*` and
-   `membarrier`. Remaining: real cross-process `flock` exclusion, enforced
+    `membarrier`. Cross-process `flock` exclusion is now covered by the
+    package-lock regression, including fork/dup/close lifetime and blocking
+    wakeups. Remaining: enforced
    resource limits other than the bounded `RLIMIT_NOFILE` implementation and
    fuller scheduling semantics (some calls currently
    acknowledge requests without implementing their effects), PTYs and full job-control terminal

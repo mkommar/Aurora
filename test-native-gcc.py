@@ -1,11 +1,12 @@
 """Run GCC, compilation, linking and generated applications inside Aurora.
 Uses isolated disk copies and QMP port 4446. No host C compiler is invoked.
 """
-import importlib.util,json,shutil,subprocess,time,struct,argparse
+import importlib.util,json,os,shutil,subprocess,time,struct,argparse
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');parser.add_argument('--cpus',type=int,default=1);parser.add_argument('--qmp-port',type=int,default=4446);args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
+qemu=os.environ.get('AURORA_QEMU') or shutil.which('qemu-system-x86_64') or 'tools/qemu/qemu-system-x86_64.exe';creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)
 folder=Path('build/ext2-tests' if args.disk!='build/toolchain.img' else 'build/native-tests');folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img');shutil.copyfile(args.disk,folder/'toolchain.img')
 # Add the regression source to the isolated test disk, preserving the user's disk.
@@ -33,12 +34,12 @@ def wait(predicate,seconds=120):
     raise AssertionError('Guest timeout:\n'+log()[-5000:])
 def boot():
     global process,q
-    process=subprocess.Popen(['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel','tcg','-cpu','qemu64','-smp',str(args.cpus),'-m','1G',
+    process=subprocess.Popen([qemu,'-machine','pc','-accel','tcg','-cpu','qemu64','-smp',str(args.cpus),'-m','1G',
         '-vga','std','-drive',f'format=raw,file={folder}/aurora.img,if=ide,index=0',
         '-drive',f'format=raw,file={folder}/toolchain.img,'+('if=none,id=development' if args.virtio else 'if=ide,index=1'),
         *(['-device','virtio-blk-pci,drive=development,disable-modern=on'] if args.virtio else []),
         '-serial',f'file:{folder}/serial.log','-net','none','-display','none',
-        '-qmp',f'tcp:127.0.0.1:{args.qmp_port},server=on,wait=off'],creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
+        '-qmp',f'tcp:127.0.0.1:{args.qmp_port},server=on,wait=off'],creationflags=creationflags,stderr=(folder/'qemu-stderr.log').open('w'))
     deadline=time.monotonic()+45
     while True:
         try:q=mod.QMP(args.qmp_port);break
@@ -47,7 +48,7 @@ def boot():
                 error=(folder/'qemu-stderr.log').read_text()
                 if 'used by another process' in error and time.monotonic()<deadline:
                     time.sleep(1)
-                    process=subprocess.Popen(process.args,creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
+                    process=subprocess.Popen(process.args,creationflags=creationflags,stderr=(folder/'qemu-stderr.log').open('w'))
                     continue
                 raise RuntimeError(f'QEMU exited before QMP connected: {process.returncode}: '+error)
             if time.monotonic()>deadline:raise

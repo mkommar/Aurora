@@ -37,7 +37,8 @@ def copy_disk(source,target):
 
 def counters(q,folder):
     default=r'C:/Program Files/Unity/Hub/Editor/6000.4.0f1/Editor/Data/PlaybackEngines/AndroidPlayer/NDK/toolchains/llvm/prebuilt/windows-x86_64/bin'
-    nm=Path(os.environ.get('AURORA_LLVM',default))/'llvm-nm.exe'
+    llvm=os.environ.get('AURORA_LLVM')
+    nm=Path(llvm)/('llvm-nm.exe' if os.name=='nt' else 'llvm-nm') if llvm else Path(shutil.which('llvm-nm') or (Path(default)/'llvm-nm.exe'))
     if not nm.exists(): return {}
     lines=subprocess.check_output([str(nm),'-n',str(folder/'kernel.elf')],text=True).splitlines()
     symbols={line.split()[2]:int(line.split()[0],16) for line in lines if len(line.split())==3}
@@ -50,7 +51,7 @@ def counters(q,folder):
     return result
 
 def run(script, folder, disk='build/development.img', timeout=7200, cpus=4,
-        port=4454, resume=False, files=None, network_ready=False):
+        port=4454, resume=False, files=None, network_ready=False, launch='bash aurora-job.sh'):
     folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
     target = folder/'development.img'
     if not resume:
@@ -62,7 +63,8 @@ def run(script, folder, disk='build/development.img', timeout=7200, cpus=4,
     payload['/work/aurora-job.sh'] = Path(script).read_bytes()
     put_ext2_files(target, payload)
     logpath = folder/'serial.log'
-    command = ['tools/qemu/qemu-system-x86_64.exe', '-machine', 'pc', '-accel', 'tcg,thread=multi',
+    qemu=os.environ.get('AURORA_QEMU') or shutil.which('qemu-system-x86_64') or 'tools/qemu/qemu-system-x86_64.exe'
+    command = [qemu, '-machine', 'pc', '-accel', 'tcg,thread=multi',
         '-cpu', 'qemu64', '-smp', str(cpus), '-m', '1G', '-no-reboot', '-vga', 'std',
         '-drive', f'format=raw,file={folder}/aurora.img,if=ide,index=0',
         '-drive', f'format=raw,file={target},if=none,id=development',
@@ -75,7 +77,7 @@ def run(script, folder, disk='build/development.img', timeout=7200, cpus=4,
     outcome={'status':'running','script':str(script),'cpus':cpus}
     (folder/'results.json').write_text(json.dumps(outcome,indent=2),encoding='utf-8')
     with (folder/'qemu-stderr.log').open('w') as stderr:
-        process = subprocess.Popen(command, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
+        process = subprocess.Popen(command, stderr=stderr, creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     def log(): return logpath.read_text(errors='replace') if logpath.exists() else ''
     try:
         start = time.monotonic()
@@ -89,7 +91,7 @@ def run(script, folder, disk='build/development.img', timeout=7200, cpus=4,
             time.sleep(.2)
         else: raise TimeoutError('Boot timeout: '+log()[-4000:])
         q.key('f2')
-        for ch in 'bash aurora-job.sh': q.key({' ':'spc', '.':'dot', '-':'minus'}.get(ch, ch))
+        for ch in launch: q.key({' ':'spc', '.':'dot', '-':'minus','/':'slash'}.get(ch, ch))
         offset=len(log()); q.key('ret'); printed=offset
         while time.monotonic()-start < timeout:
             data=log()
