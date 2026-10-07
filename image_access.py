@@ -19,7 +19,8 @@ def geometry(disk, lib):
 
 def read_ext2_files(image,paths):
     """Read canonical ext2 paths; reject every write at the callback boundary."""
-    lib=C.CDLL(str(Path(os.environ.get('AURORA_IMAGE_TOOL','build/image-tool/ext2-image.dll')).resolve()))
+    default_tool='build/image-tool/ext2-image.dll' if os.name=='nt' else 'build/image-tool/ext2-image.so'
+    lib=C.CDLL(str(Path(os.environ.get('AURORA_IMAGE_TOOL',default_tool)).resolve()))
     callback_type=C.CFUNCTYPE(C.c_int,C.c_void_p,C.c_uint64,C.c_uint32,C.c_int)
     lib.au_attach.argtypes=[callback_type]
     lib.au_get.argtypes=[C.c_char_p,C.c_void_p,C.c_uint64,C.POINTER(C.c_uint64)]
@@ -49,7 +50,8 @@ def read_ext2_files(image,paths):
 
 def put_ext2_files(image,files):
     image=Path(image)
-    image_tool=Path(os.environ.get('AURORA_IMAGE_TOOL','build/image-tool/ext2-image.dll')).resolve()
+    default_tool='build/image-tool/ext2-image.dll' if os.name=='nt' else 'build/image-tool/ext2-image.so'
+    image_tool=Path(os.environ.get('AURORA_IMAGE_TOOL',default_tool)).resolve()
     if not image_tool.exists() and os.name != 'nt':
         # Linux development images are raw ext2 files. Use the distro's
         # debugfs rather than requiring the Windows-only image-tool DLL.
@@ -67,7 +69,7 @@ def put_ext2_files(image,files):
                 payload=Path(temporary)/('payload-'+str(len(commands)))
                 payload.write_bytes(data)
                 commands.append(f'write {payload} {path}')
-                if path.endswith('.sh') or path in ('/bin/curl','/work/rebuild-network.sh','/work/platform','/work/package-locks'):
+                if path.endswith('.sh') or path in ('/bin/curl','/bin/bash','/usr/bin/bash','/lib/ld-musl-x86_64.so.1','/work/rebuild-network.sh','/work/platform','/work/package-locks','/work/apt-repo-server','/work/apt-repo-client'):
                     commands.append(f'set_inode_field {path} mode 0100755')
             command_file=Path(temporary)/'debugfs.commands';command_file.write_text('\n'.join(commands)+'\n')
             subprocess.run(['debugfs','-w','-f',str(command_file),str(image)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
@@ -105,7 +107,7 @@ def put_ext2_files(image,files):
                         error=lib.au_mkdir(name.encode())
                         if error not in (0,17):raise RuntimeError(f'ext2 mkdir {name}: error {error}')
                         directories.add(name)
-                executable=path.endswith('.sh') or path in ('/bin/curl','/work/rebuild-network.sh')
+                executable=path.endswith('.sh') or path in ('/bin/curl','/bin/bash','/usr/bin/bash','/lib/ld-musl-x86_64.so.1','/work/rebuild-network.sh','/work/apt-repo-server','/work/apt-repo-client')
                 error=lib.au_put(path.encode(),data,len(data),0o755 if executable else 0o644)
                 if error:raise RuntimeError(f'ext2 image write {path}: error {error}')
         finally:check(lib.au_close())

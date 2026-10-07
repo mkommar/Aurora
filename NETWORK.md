@@ -29,15 +29,20 @@ sync
 `./run.ps1 -Offline` omits the NIC while retaining the entropy device. The
 128 MiB minimal and self-test profiles do not initialize the network DMA area.
 QEMU exposes the host through `10.0.2.2`; the configured DNS proxy is `10.0.2.3`.
-There is no host port forwarding in the default launch configuration.
+There is no host port forwarding in the default launch configuration. A test
+or custom QEMU launch can forward a host port to a guest TCP listener; a guest
+client reaches that service at `10.0.2.2:<host-port>`.
 
 ## Runtime and isolation
 
 - IPv4, Ethernet, ARP, ICMP, DHCP, UDP, and TCP are supplied by pinned lwIP.
 - DNS uses musl's resolver and `/etc/resolv.conf`, through Aurora UDP sockets.
-- The Linux-compatible socket ABI covers client socket creation, bind/connect,
+- The Linux-compatible socket ABI covers socket creation, bind/connect/listen/accept,
   send/receive, scatter/gather, names, selected options, shutdown, nonblocking
   operation, poll/select, and shared open descriptions across dup/fork.
+- TCP listeners queue up to eight pending accepted connections. Listen backlog
+  is clamped to that bounded queue; this is enough for the QEMU repository
+  fixture and is not a general high-load server implementation.
 - `eventfd`/`eventfd2` supply shared counters and readiness for curl's wakeups.
 - VirtIO RX/TX buffers remain in supervisor memory. Queue indices, descriptor
   IDs, packet lengths, and user pointers are checked. Processing is limited
@@ -103,8 +108,30 @@ the client and TLS libraries before running these checks. Always sync before
 stopping a VM; ext2 is not journaled, and an abruptly stopped disposable test
 disk must not be reused as a clean baseline.
 
-This release targets IPv4 client traffic in QEMU TCG. IPv6, listening/accept,
-Unix-domain sockets, general hardware NICs, DHCP-derived resolver updates,
+`test-apt-repository-pair.py` starts two Aurora guests with separate writable
+development disks. The server guest provides repository `Packages`, `Release`,
+and `.deb` files; the client retrieves them through QEMU's host-forwarded user
+network, then the staged curl performs the same downloads and verifies an HTTPS
+payload using the test CA. The harness compares the fetched bytes with the
+fixture contents after the client VM stops. On Linux, prepare the helper and
+development image with `python3 build-image-tool-linux.py` and
+`python3 setup-development.py --partitioned --image build/development-pair.img`;
+build the pinned curl bundle from the verified cached source archives with
+`python3 build-network-bootstrap-linux.py`, then run:
+
+```sh
+python3 test-apt-repository-pair.py --disk build/development-pair.img
+```
+
+When a compatible guest Bash executable is available, pass it with
+`--bash-binary /path/to/bash`; the harness then runs the Bash/curl repository
+and verified-TLS script inside the client guest as well.
+
+This verifies the QEMU NAT host-forwarding path and bounded TCP listener support;
+it is an apt-style repository transfer test, not package-manager installation.
+
+This release targets IPv4 traffic in QEMU TCG. IPv6, Unix-domain sockets,
+general hardware NICs, DHCP-derived resolver updates,
 DNS-over-TCP fallback, and most advanced socket options are not implemented.
 Unsupported operations return errors. QEMU NAT may time out rather than
 immediately reject an unavailable host port. The tested WHPX configuration

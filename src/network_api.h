@@ -9,6 +9,8 @@ int network_socket(int type,int protocol);
 void network_close(int socket);
 int network_connect(int socket,const void *address,unsigned length);
 int network_bind(int socket,const void *address,unsigned length);
+int network_listen(int socket,unsigned backlog);
+int network_accept(int socket,void *address,unsigned *length);
 long network_send(int socket,const void *data,size_t size,unsigned flags,const void *address,unsigned length);
 long network_recv(int socket,void *data,size_t size,unsigned flags,void *address,unsigned *length);
 unsigned network_readiness(int socket);
