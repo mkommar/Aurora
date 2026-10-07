@@ -56,13 +56,14 @@ static i64 development_file(const char *name,void *buffer,u64 size,int write){
 }
 static void openapp(int id){app=id;drag=0;dirty=1;serial("APP ");char label[2]={'0'+id,0};serial(label);serial("\r\n");}
 static void command(void){char b[80]=" > ";memcpy(b+3,cmd,clen+1);logline(b);serial("COMMAND ");serial(cmd);serial("\r\n");
- if(eq(cmd,"help")){logline("help about mem clear theme reboot poweroff");logline("ls | cat FILE | save [FILE] | load [FILE] | run APP");logline("GCC: gcc -static demo.c -o demo, then ./demo");logline("GNU environment: bash, make; FAT32: /exchange");logline("Applications: hello [name], calc A B, filedemo");}
+ if(eq(cmd,"help")){logline("help about mem clear theme sync reboot poweroff");logline("ls | cat FILE | save [FILE] | load [FILE] | run APP");logline("GCC: gcc -static demo.c -o demo, then ./demo");logline("GNU environment: bash, make; FAT32: /exchange");logline("Applications: hello [name], calc A B, filedemo");}
  else if(eq(cmd,"about")){logline("Aurora 0.2 / original x86-64 microkernel");logline("Three ring-3 services, private address spaces, IPC.");}
  else if(eq(cmd,"mem")){logline("QEMU: 128 MiB minimal / 1 GiB with native GCC disk");logline("SDK process: 2 MiB; native tool: 128 MiB address space");logline("Desktop + display share a 3 MiB presentation surface.");}
  else if(eq(cmd,"clear"))linecount=0;
  else if(eq(cmd,"theme")){theme=!theme;accent=theme?0xf3bb70:0x55e0c2;logline("Desktop palette changed.");}
  else if(eq(cmd,"reboot")){if(syscall(SYS_SYNC,0,0,0)<0)logline("Disk flush failed; reboot cancelled.");else{Message m={0,MSG_POWER,1,0,0};send(INPUT,&m);}}
  else if(eq(cmd,"poweroff")){if(syscall(SYS_SYNC,0,0,0)<0)logline("Disk flush failed; poweroff cancelled.");else{Message m={0,MSG_POWER,2,0,0};send(INPUT,&m);}}
+ else if(eq(cmd,"sync")){serial("SYNC: begin\r\n");i64 result=syscall(SYS_SYNC,0,0,0);if(result<0){serial("SYNC: error\r\n");logline("Disk flush failed.");}else{serial("SYNC: complete\r\n");logline("Disk sync complete.");}}
  else if(eq(cmd,"ls")){for(int i=0;i<FS_FILES;i++){FileEntry entry;i64 r=syscall(SYS_FILE_LIST,i,(u64)&entry,0);if(r<0){report_error(r);break;}if(entry.used)logline(entry.name);}for(int i=0;i<4096;i++){FileEntry entry;if(syscall(SYS_NATIVE_LIST,i,(u64)&entry,0)<0)break;logline(entry.name);}}
  else if(cmd[0]=='c'&&cmd[1]=='a'&&cmd[2]=='t'&&cmd[3]==' '){static char buffer[FS_MAX_SIZE];i64 n=file_request(cmd+4,buffer,sizeof(buffer),0);if(n==ERR_NOT_FOUND)n=development_file(cmd+4,buffer,sizeof(buffer),0);if(n<0)report_error(n);else {console_text(0,buffer,(int)n);if(output_lengths[0]){console_text(0,"\n",1);}}}
  else if(cmd[0]=='s'&&cmd[1]=='a'&&cmd[2]=='v'&&cmd[3]=='e'&&cmd[4]==' '){i64 r=development_file(cmd+5,notes,nlen,1);if(r<0)report_error(r);else logline("Source saved to development disk.");}
