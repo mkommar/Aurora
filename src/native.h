@@ -810,7 +810,7 @@ static Frame *native_dispatch(Frame *f){
         if(waiting->kind==5&&waiting->address&&!waiting->extra[0]){u64 *left=native_buffer(current_task,waiting->address,16,1);if(left){u64 ticks=waiting->deadline>timer_ticks?waiting->deadline-timer_ticks:0;left[0]=ticks/100;left[1]=(ticks%100)*10000000;}}
         native_wait_reset(current_task);tasks[current_task].frame.rax=-4;return schedule();}
     switch(n){
-    case 41:case 42:case 43:case 44:case 45:case 46:case 47:case 48:case 49:case 50:case 51:case 52:case 53:case 54:case 55:
+    case 41:case 42:case 43:case 44:case 45:case 46:case 47:case 48:case 49:case 50:case 51:case 52:case 53:case 54:case 55:case 288:
         result=native_network(n,a,b,c,d,e,g);break;
     case 7:case 271:result=native_poll_call(n,a,b,c,d,e);break;
     case 23:case 270:result=native_select_call(n,a,b,c,d,e,g);break;

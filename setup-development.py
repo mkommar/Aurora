@@ -3,11 +3,12 @@
 Uses the pinned lwext4 host image tool; never formats a physical drive.
 """
 from pathlib import Path
-import argparse,ctypes as C,struct,tarfile,posixpath,zlib,uuid
+import argparse,ctypes as C,struct,tarfile,posixpath,zlib,uuid,os
 p=argparse.ArgumentParser();p.add_argument('--image',default='build/development.img');p.add_argument('--gnu',action='store_true');p.add_argument('--partitioned',action='store_true');args=p.parse_args()
 target=Path(args.image);temporary=target.with_suffix('.img.partial')
 if target.exists() or temporary.exists():raise SystemExit('Refusing to overwrite an existing image or partial image')
-lib=C.CDLL(str(Path('build/image-tool/ext2-image.dll').resolve()))
+image_tool=os.environ.get('AURORA_IMAGE_TOOL') or ('build/image-tool/ext2-image.dll' if os.name=='nt' else 'build/image-tool/ext2-image.so')
+lib=C.CDLL(str(Path(image_tool).resolve()))
 callback_type=C.CFUNCTYPE(C.c_int,C.c_void_p,C.c_uint64,C.c_uint32,C.c_int)
 lib.au_format.argtypes=[callback_type];lib.au_put.argtypes=[C.c_char_p,C.c_void_p,C.c_uint64,C.c_uint32]
 lib.au_fatformat.argtypes=[callback_type]

@@ -12,11 +12,13 @@
 #include "netif/ethernet.h"
 #define NET_SOCKETS 32
 #define UDP_PENDING 8
+#define TCP_ACCEPT_PENDING 8
 typedef struct {uint16_t family,port;uint32_t ip;unsigned char zero[8];} NetAddress;
 typedef struct {
-    int type,connecting,connected,error,eof,read_closed,write_closed;
+    int type,connecting,connected,listening,error,eof,read_closed,write_closed;
     struct tcp_pcb *tcp;struct udp_pcb *udp;struct pbuf *received;
     struct pbuf *datagrams[UDP_PENDING];NetAddress senders[UDP_PENDING];unsigned head,count,queued_bytes;
+    int accepted[TCP_ACCEPT_PENDING];unsigned accept_head,accept_count;
 } NetSocket;
 static NetSocket sockets[NET_SOCKETS];
 static struct netif interface;
@@ -62,9 +64,18 @@ void network_input(const void *packet,unsigned length){
 }
 void network_tick(void){if(initialized)sys_check_timeouts();}
 static void tcp_error(void *argument,err_t error){NetSocket *s=argument;s->tcp=0;s->error=error==ERR_CLSD?0:s->connecting&&error==ERR_RST?111:error_number(error);s->connecting=0;s->eof=1;}
+static err_t receive_tcp(void *argument,struct tcp_pcb *pcb,struct pbuf *p,err_t error);
 static err_t connected(void *argument,struct tcp_pcb *pcb,err_t error){
     NetSocket *s=argument;(void)pcb;s->connecting=0;s->error=error_number(error);s->connected=error==ERR_OK;
     if(s->connected)network_connections++;return ERR_OK;
+}
+static err_t accepted(void *argument,struct tcp_pcb *pcb,err_t error){
+    NetSocket *listener=argument;if(error!=ERR_OK)return error;if(!listener||!listener->listening||listener->accept_count==TCP_ACCEPT_PENDING){tcp_abort(pcb);return ERR_ABRT;}
+    int handle;for(handle=0;handle<NET_SOCKETS&&sockets[handle].type;handle++){}if(handle==NET_SOCKETS){tcp_abort(pcb);return ERR_ABRT;}
+    NetSocket *client=&sockets[handle];memset(client,0,sizeof(*client));client->type=1;client->connected=1;client->tcp=pcb;
+    tcp_arg(pcb,client);tcp_recv(pcb,receive_tcp);tcp_err(pcb,tcp_error);
+    unsigned tail=(listener->accept_head+listener->accept_count)%TCP_ACCEPT_PENDING;listener->accepted[tail]=handle;listener->accept_count++;network_connections++;
+    return ERR_OK;
 }
 static err_t receive_tcp(void *argument,struct tcp_pcb *pcb,struct pbuf *p,err_t error){
     NetSocket *s=argument;(void)pcb;
@@ -90,7 +101,8 @@ int network_socket(int type,int protocol){
 }
 void network_close(int handle){
     NetSocket *s=get_socket(handle);if(!s)return;
-    if(s->tcp){tcp_arg(s->tcp,0);tcp_recv(s->tcp,0);tcp_err(s->tcp,0);if(tcp_close(s->tcp)!=ERR_OK)tcp_abort(s->tcp);}
+    while(s->accept_count){int child=s->accepted[s->accept_head];s->accept_head=(s->accept_head+1)%TCP_ACCEPT_PENDING;s->accept_count--;network_close(child);}
+    if(s->tcp){tcp_arg(s->tcp,0);if(s->tcp->state==LISTEN)tcp_accept(s->tcp,0);else{tcp_recv(s->tcp,0);tcp_err(s->tcp,0);}if(tcp_close(s->tcp)!=ERR_OK)tcp_abort(s->tcp);}
     if(s->udp)udp_remove(s->udp);if(s->received)pbuf_free(s->received);
     for(unsigned i=0;i<s->count;i++)pbuf_free(s->datagrams[(s->head+i)%UDP_PENDING]);memset(s,0,sizeof(*s));
 }
@@ -105,6 +117,19 @@ int network_bind(int handle,const void *address,unsigned length){
     NetSocket *s=get_socket(handle);if(!s)return -9;ip_addr_t ip;uint16_t port;int r=parse_address(address,length,&ip,&port);if(r)return r;
     if(s->type==1&&!s->tcp)return -107;
     return -error_number(s->type==1?tcp_bind(s->tcp,&ip,port):udp_bind(s->udp,&ip,port));
+}
+int network_listen(int handle,unsigned backlog){
+    NetSocket *s=get_socket(handle);if(!s)return -9;if(s->type!=1)return -95;if(s->connected)return -22;
+    if(!s->tcp)return -107;if(backlog<1)backlog=1;if(backlog>TCP_ACCEPT_PENDING)backlog=TCP_ACCEPT_PENDING;
+    err_t error;struct tcp_pcb *listener=tcp_listen_with_backlog_and_err(s->tcp,(u8_t)backlog,&error);
+    if(!listener)return -error_number(error);s->tcp=listener;s->listening=1;tcp_arg(listener,s);tcp_accept(listener,accepted);return 0;
+}
+int network_accept(int handle,void *address,unsigned *length){
+    NetSocket *s=get_socket(handle);if(!s)return -9;if(!s->listening)return -22;if(!s->accept_count)return -11;
+    int child=s->accepted[s->accept_head];s->accept_head=(s->accept_head+1)%TCP_ACCEPT_PENDING;s->accept_count--;
+    NetSocket *client=get_socket(child);if(!client)return -5;
+    if(address&&length){NetAddress peer={.family=2,.port=lwip_htons(client->tcp->remote_port),.ip=ip_addr_get_ip4_u32(&client->tcp->remote_ip)};copy_address(address,length,&peer);}
+    return child;
 }
 long network_send(int handle,const void *data,size_t size,unsigned flags,const void *address,unsigned length){
     NetSocket *s=get_socket(handle);if(!s)return -9;if(flags&~(0x40U|0x4000U|0x8000U))return -95;
@@ -135,7 +160,7 @@ long network_recv(int handle,void *data,size_t size,unsigned flags,void *address
 }
 unsigned network_readiness(int handle){
     NetSocket *s=get_socket(handle);if(!s)return 32;unsigned result=0;
-    if(s->received||s->count||s->eof||s->read_closed)result|=1;
+    if(s->received||s->count||s->accept_count||s->eof||s->read_closed)result|=1;
     if(s->type==2||(s->connected&&s->tcp&&tcp_sndbuf(s->tcp)&&!s->write_closed))result|=4;
     if(s->error)result|=8|4;if(s->eof)result|=16;return result;
 }

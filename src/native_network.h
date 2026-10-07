@@ -2,10 +2,10 @@
 /* Linux x86-64 socket ABI. No user pointers survive a syscall or enter lwIP. */
 static i64 native_network_wait(u64 n,u64 fd,u64 flags,i64 result){
     NativeFd *f=&native_process[current_task].fd[fd];
-    if((result==-11||(n==42&&result==-115))&&!(flags&0x40)&&!(native_descriptions[f->description].flags&0x800)){
+    if((result==-11||(n==42&&result==-115))&&!(flags&(0x40|0x800))&&!(native_descriptions[f->description].flags&0x800)){
         NativeWait *w=&native_waits[current_task];
         if(n==42&&w->kind&&timer_ticks>=w->deadline)return -110;
-        if(!w->kind)*w=(NativeWait){.kind=1,.syscall=n,.address=fd,.count=n==45||n==47?1:4,.deadline=n==42?timer_ticks+1500:~0ULL};
+        if(!w->kind)*w=(NativeWait){.kind=1,.syscall=n,.address=fd,.count=n==43||n==45||n==47||n==288?1:4,.deadline=n==42?timer_ticks+1500:~0ULL};
         native_wait_blocks++;return -4096;
     }
     return result;
@@ -20,7 +20,19 @@ static i64 native_network(u64 n,u64 a,u64 b,u64 c,u64 d,u64 e,u64 g){
     }
     if(n==53)return -97;
     if(a>=NATIVE_FDS||!p->fd[a].kind)return -9;if(p->fd[a].kind!=6)return -88;int socket=p->fd[a].index;
-    if(n==43||n==50)return -95; /* Client transport only; no listening endpoint yet. */
+    if(n==50)return network_listen(socket,(u32)b);
+    if(n==43||n==288){
+        if(n==288&&(d&~0x80800ULL))return -22;
+        int fd=native_fd_allocate();if(fd<0)return fd;
+        u32 capacity=0,*length=0;void *address=0;
+        if(b){length=native_buffer(current_task,c,4,1);if(!length)return -14;capacity=*length;if(capacity>128)capacity=128;
+            address=capacity?native_buffer(current_task,b,capacity,1):0;if(capacity&&!address)return -14;}
+        int accepted=network_accept(socket,0,0);if(accepted<0)return native_network_wait(n,a,n==288?(u32)d:0,accepted);
+        int description=native_description(2|(n==288?(u32)d&0x800:0));if(!description){network_close(accepted);return -23;}
+        p->fd[fd]=(NativeFd){.kind=6,.index=accepted,.description=description,.flags=n==288?(u32)d&0x80000:0};
+        if(length){u8 peer[16];unsigned out_length=sizeof(peer);if(!network_name(accepted,peer,&out_length,1)){unsigned count=capacity<out_length?capacity:out_length;if(count)memcpy(address,peer,count);*length=out_length;}}
+        return fd;
+    }
     if(n==42||n==49){
         if(c<16||c>128)return -22;void *address=native_buffer(current_task,b,16,0);if(!address)return -14;
         i64 result=n==42?network_connect(socket,address,c):network_bind(socket,address,c);
