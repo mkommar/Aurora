@@ -20,12 +20,21 @@ parser.add_argument('--llvm', default=os.environ.get('AURORA_LLVM') or
 args = parser.parse_args()
 out = Path('build/recovery-tests'); out.mkdir(parents=True, exist_ok=True)
 llvm = Path(args.llvm)
-subprocess.run([str(llvm/'clang.exe'), '--target=x86_64-pc-windows-msvc',
-    '-ffreestanding', '-fno-builtin', '-fno-stack-protector', '-mno-stack-arg-probe',
-    '-O2', '-Wall', '-Wextra', '-Werror', '-c', 'tests/recovery-host.c', '-o', str(out/'recovery.obj')], check=True)
-subprocess.run([str(llvm/'ld.lld.exe'), '-flavor', 'link', '/dll', '/noentry', '/nodefaultlib',
-    '/out:'+str(out/'recovery.dll'), str(out/'recovery.obj')], check=True)
-lib = C.CDLL(str((out/'recovery.dll').resolve()))
+if os.name == 'nt':
+    subprocess.run([str(llvm/'clang.exe'), '--target=x86_64-pc-windows-msvc',
+        '-ffreestanding', '-fno-builtin', '-fno-stack-protector', '-mno-stack-arg-probe',
+        '-O2', '-Wall', '-Wextra', '-Werror', '-c', 'tests/recovery-host.c', '-o', str(out/'recovery.obj')], check=True)
+    subprocess.run([str(llvm/'ld.lld.exe'), '-flavor', 'link', '/dll', '/noentry', '/nodefaultlib',
+        '/out:'+str(out/'recovery.dll'), str(out/'recovery.obj')], check=True)
+    library=out/'recovery.dll'
+else:
+    subprocess.run([str(llvm/'clang'), '-fPIC', '-shared', '-fdeclspec', '-ffreestanding',
+        '-fno-builtin', '-fno-stack-protector', '-O2', '-Wall', '-Wextra',
+        '-Wno-ignored-attributes', '-Wno-unused-function', '-c', 'tests/recovery-host.c',
+        '-o', str(out/'recovery.o')], check=True)
+    subprocess.run([str(llvm/'ld.lld'), '-shared', '-o', str(out/'recovery.so'), str(out/'recovery.o')], check=True)
+    library=out/'recovery.so'
+lib = C.CDLL(str(library.resolve()))
 callback_type = C.CFUNCTYPE(C.c_int, C.c_uint32, C.c_void_p, C.c_int)
 lib.recovery_setup.argtypes = [C.c_uint64, callback_type]
 lib.recovery_count.restype = C.c_uint64
