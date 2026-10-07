@@ -23,6 +23,10 @@ steps 1â€“7. GNU Make can now rebuild and install itself inside Aurora.
 The clean-source GNU build and Debian-format package work is tracked in
 [Native packages](PACKAGES.md); full toolchain bootstrap and package lifecycle
 management remain in progress.
+The deterministic package and source distribution generator is documented in
+[the package distribution guide](PACKAGES.md); it can publish a static tree
+to GitHub Pages, but it does not mirror upstream source archives or claim that
+the eventual `Aurora-packages` site is live.
 Musl POSIX threads use shared address spaces and futex synchronization.
 The launcher now starts four CPUs; use `-Cpus 1` for a single-CPU boot.
 ELF interpreters, PIE applications and shared-library loading are supported.
