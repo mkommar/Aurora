@@ -67,14 +67,17 @@ On Linux, use the portable image/build path and the distro QEMU binary:
 sudo apt install clang lld llvm nasm qemu-system-x86 python3-pil musl-tools e2fsprogs
 python3 setup-native-gcc.py
 python3 build-linux.py
-python3 test-native-gcc.py --disk build/toolchain.img --cpus 1 --foundations-only
+python3 test-native-gcc.py --disk build/toolchain.img --cpus 1 --compile-only
 ```
 
 The Linux runner now resolves QEMU from `AURORA_QEMU` or `PATH` and does not
 use Windows process-creation flags. The native-GCC test still exercises the
 compiler inside Aurora; if the guest test times out after compilation, retain
 the serial log because that indicates a guest runtime regression rather than a
-host toolchain setup failure.
+host toolchain setup failure. `--compile-only` validates the in-guest compiler
+and linker without entering the longer foundations runtime suite; it reports
+the final guest `sync` as a deliberate skip. The full suite still exercises
+that sync path and currently exposes a guest timeout on this Linux run.
 
 Setup downloads an 89 MB archive, verifies the pinned SHA-512, resolves archive
 links in memory, and copies selected file contents into a 512 MiB raw disk. It

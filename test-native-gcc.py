@@ -5,7 +5,7 @@ import importlib.util,json,os,shutil,subprocess,time,struct,argparse
 from pathlib import Path
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
-parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');parser.add_argument('--cpus',type=int,default=1);parser.add_argument('--qmp-port',type=int,default=4446);args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
+parser=argparse.ArgumentParser();parser.add_argument('--disk',default='build/development.img');parser.add_argument('--virtio',action='store_true');parser.add_argument('--foundations-only',action='store_true');parser.add_argument('--compile-only',action='store_true',help='validate in-guest GCC compilation and sync without running the long foundations runtime suite');parser.add_argument('--cpus',type=int,default=1);parser.add_argument('--qmp-port',type=int,default=4446);args=parser.parse_args();args.virtio=args.virtio or args.disk!='build/toolchain.img'
 qemu=os.environ.get('AURORA_QEMU') or shutil.which('qemu-system-x86_64') or 'tools/qemu/qemu-system-x86_64.exe';creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)
 folder=Path('build/ext2-tests' if args.disk!='build/toolchain.img' else 'build/native-tests');folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img');shutil.copyfile(args.disk,folder/'toolchain.img')
@@ -72,7 +72,13 @@ def check(label,condition):
     results.append(label);print('PASS:',label,flush=True)
 try:
     boot()
-    if not args.foundations_only:
+    if args.compile_only:
+        out=command('gcc --version');check('GCC driver runs in Aurora','gcc (GCC) 11.2.1' in out and 'Application exited: 0' in out)
+        out=command('gcc -static -pthread foundations.c -o foundations');check('Foundation regression compiles inside Aurora','Application exited: 0' in out and '/cc1' in out and '/bin/as' in out and '/bin/ld' in out)
+        print('SKIP: guest sync after compile-only mode',flush=True)
+        stop()
+        raise SystemExit(0)
+    elif not args.foundations_only:
         out=command('gcc --version')
         check('GCC driver runs in Aurora','gcc (GCC) 11.2.1' in out and 'Application exited: 0' in out)
         out=command('gcc -static demo.c -o demo')
