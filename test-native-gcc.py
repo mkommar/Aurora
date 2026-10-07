@@ -65,7 +65,7 @@ def command(text,application=True):
     for ch in text:q.key({' ':'spc','-':'minus','.':'dot','/':'slash'}.get(ch,ch))
     q.key('ret')
     if application:wait(lambda:'Application exited:' in log()[offset:])
-    else:time.sleep(.3)
+    else:wait(lambda:'SYNC: complete' in log()[offset:] or 'SYNC: error' in log()[offset:],seconds=180)
     return log()[offset:]
 def check(label,condition):
     assert condition,label+'\n'+log()[-5000:]
@@ -75,7 +75,7 @@ try:
     if args.compile_only:
         out=command('gcc --version');check('GCC driver runs in Aurora','gcc (GCC) 11.2.1' in out and 'Application exited: 0' in out)
         out=command('gcc -static -pthread foundations.c -o foundations');check('Foundation regression compiles inside Aurora','Application exited: 0' in out and '/cc1' in out and '/bin/as' in out and '/bin/ld' in out)
-        print('SKIP: guest sync after compile-only mode',flush=True)
+        out=command('sync',application=False);check('Filesystem flush succeeds after in-guest compilation','SYNC: complete' in out)
         stop()
         raise SystemExit(0)
     elif not args.foundations_only:
@@ -102,11 +102,11 @@ try:
         out=command('./smp');check('Pinned threads, GS isolation, remote protection changes and COW','PASS SMP pinned pthreads' in out and 'PASS SMP fork/COW' in out and 'PASS remote CPU loses stale write permission' in out and 'Application exited: 0' in out)
     out=command('./foundations leader-exit');check('Desktop waits for final thread and preserves exit status','THREAD_WORKER_FINISHED' in out and 'Application exited: 7' in out)
     (folder/'foundations-serial.log').write_text(log())
-    out=command('sync');check('Filesystem flush succeeds before reboot','Application exited: 0' in out)
+    out=command('sync',application=False);check('Filesystem flush succeeds before reboot','SYNC: complete' in out)
     stop();boot();out=command('hello aurora' if args.foundations_only else './demo');check('SDK application runs after restart' if args.foundations_only else 'Guest-built executable survives VM restart',('Hello, aurora!' if args.foundations_only else 'Compiled by GCC inside Aurora!') in out)
     out=command('hello aurora');check('Original Aurora SDK applications still run','Hello, aurora!' in out)
     q.capture('native-gcc-tested')
-    out=command('sync');check('Filesystem flush succeeds before shutdown','Application exited: 0' in out)
+    out=command('sync',application=False);check('Filesystem flush succeeds before shutdown','SYNC: complete' in out)
 finally:stop()
 (folder/'results.json').write_text(json.dumps({'passed':results},indent=2))
 print(f'{len(results)} native GCC checks passed.')

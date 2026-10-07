@@ -54,13 +54,13 @@ def stop():
         except OSError:pass
         q.sock.close();q=None
     if process:process.wait(timeout=15);process=None
-def command(text,seconds=180):
+def command(text,seconds=180,completion=None):
     print('GUEST:',text,flush=True);offset=len(log())
     for ch in text:
         if ch.isupper() or ch=='_':
             q.call('send-key',{'keys':[{'type':'qcode','data':'shift'},{'type':'qcode','data':'minus' if ch=='_' else ch.lower()}],'hold-time':30});time.sleep(.07)
         else:q.key({' ':'spc','-':'minus','.':'dot','/':'slash',',':'comma'}.get(ch,ch))
-    q.key('ret');wait(lambda:'Application exited:' in log()[offset:],seconds);return log()[offset:]
+    q.key('ret');wait(lambda:(completion in log()[offset:] if completion else 'Application exited:' in log()[offset:]),seconds);return log()[offset:]
 def check(label,condition):
     assert condition,label+'\n'+log()[-6000:]
     results.append(label);print('PASS:',label,flush=True)
@@ -87,10 +87,7 @@ try:
     else:
         check('VirtIO batched multi-slot submissions',counters['virtio_batches']>0 and counters['virtio_max_batch']>=2 and counters['virtio_timeouts']==0)
         check('AuroraFS boot volume uses interrupt-driven ATA',counters['ata_timeouts']==0)
-    if args.platform_binary:
-        print('SKIP: filesystem sync command after prebuilt host test binary',flush=True)
-    else:
-        out=command('sync');check('Filesystem sync','Application exited: 0' in out)
+    out=command('sync',completion='SYNC: complete');check('Filesystem sync completes in the guest','SYNC: complete' in out)
 finally:
     stop()
     (folder/'results.json').write_text(json.dumps(results,indent=2),encoding='utf-8')

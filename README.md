@@ -72,7 +72,7 @@ reboot. Notes use append/backspace editing with
 wrapping and scrolling. The keyboard layout is US. The clock reflects QEMU's
 RTC, normally UTC.
 
-Terminal commands: `help`, `about`, `mem`, `clear`, `theme`, `reboot`, `poweroff`,
+Terminal commands: `help`, `about`, `mem`, `clear`, `theme`, `sync`, `reboot`, `poweroff`,
 `ls`, `cat FILE`, `save`, `load`, `run APP [args]`. Application names also work
 directly: `hello aurora`, `calc 12 30`, `filedemo`.
 
