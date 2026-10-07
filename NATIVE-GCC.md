@@ -64,10 +64,12 @@ python setup-native-gcc.py
 On Linux, use the portable image/build path and the distro QEMU binary:
 
 ```sh
-sudo apt install clang lld llvm nasm qemu-system-x86 python3-pil musl-tools e2fsprogs
+sudo apt install clang lld llvm nasm binutils qemu-system-x86 python3-pil musl-tools e2fsprogs
 python3 setup-native-gcc.py
 python3 build-linux.py
 python3 test-native-gcc.py --disk build/toolchain.img --cpus 1 --compile-only
+python3 prepare-native-gcc-threadfix.py
+python3 test-native-gcc.py --disk build/toolchain-threadfix.img --cpus 1 --foundations-only
 ```
 
 The Linux runner now resolves QEMU from `AURORA_QEMU` or `PATH` and does not
@@ -76,8 +78,14 @@ compiler inside Aurora; if the guest test times out after compilation, retain
 the serial log because that indicates a guest runtime regression rather than a
 host toolchain setup failure. `--compile-only` validates the in-guest compiler
 and linker without entering the longer foundations runtime suite; it reports
-the final guest `sync` as a deliberate skip. The full suite still exercises
-that sync path and currently exposes a guest timeout on this Linux run.
+the full suite exercises the runtime, thread-exit and filesystem-sync paths.
+The original AURDEV image remains unpatched; its musl `_Fork` implementation
+does not register the thread-exit futex in the child. `prepare-native-gcc-threadfix.py`
+creates a separate copy with Aurora's pinned musl `_Fork` fix after checking
+both source and original libc hashes. The copy is for validating thread-exit
+behavior and does not modify the source compiler image. This Linux fallback
+builds the pinned musl archive member on the host; the documented full
+development-image workflow still compiles the backport inside Aurora.
 
 Setup downloads an 89 MB archive, verifies the pinned SHA-512, resolves archive
 links in memory, and copies selected file contents into a 512 MiB raw disk. It
