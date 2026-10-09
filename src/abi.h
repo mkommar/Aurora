@@ -21,7 +21,12 @@ enum { MSG_CONSOLE=7 };
 enum { ERR_NOT_FOUND=-7, ERR_IO=-8, ERR_FORMAT=-9, ERR_LIMIT=-10, ERR_NAME=-11 };
 /* Flat AuroraFS: 32 named files, each with a dedicated 64 KiB extent.
    File calls transfer whole files; a read returns up to capacity bytes. */
+#ifdef AURORA_SELF_TEST
+/* Self-test images keep the boot bundle and filesystem extents disjoint. */
+enum { FS_FILES=32, FS_MAX_SIZE=65536, FS_LBA=1024, FS_DATA_LBA=1032 };
+#else
 enum { FS_FILES=32, FS_MAX_SIZE=65536, FS_LBA=512, FS_DATA_LBA=520 };
+#endif
 typedef struct { char name[32]; u32 size,used; u8 reserved[24]; } FileEntry;
 typedef struct { char name[32]; u64 buffer,size; } FileRequest;
 typedef struct { char name[32]; char args[128]; } SpawnRequest;

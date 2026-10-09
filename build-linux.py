@@ -36,13 +36,16 @@ def compile_source(clang, flags, source, output, extra=()):
     run([clang, *flags, *extra, '-c', source, '-o', output])
 
 
-def pack_files(image, files):
-    data = bytearray(image.read_bytes()) if image.exists() else bytearray(16 * 1024 * 1024)
-    if len(data) != 16 * 1024 * 1024:
-        raise SystemExit('Expected a 16 MiB Aurora disk image')
-    base = 512 * 512
+def pack_files(image, files, fs_lba, image_bytes):
+    data = bytearray(image.read_bytes()) if image.exists() else bytearray(image_bytes)
+    if len(data) != image_bytes:
+        raise SystemExit(f'Expected a {image_bytes // (1024 * 1024)} MiB Aurora disk image')
+    base = fs_lba * 512
+    data_end = (fs_lba + 8 + 32 * 128) * 512
+    if data_end > len(data) or fs_lba != 512 and fs_lba <= 600:
+        raise SystemExit('Filesystem layout overlaps the loader or image boundary')
     if data[base:base + 8] != b'AURFS01\0':
-        if any(data[base:base + (520 + 32 * 128) * 512]):
+        if any(data[base:data_end]):
             raise SystemExit('Unknown filesystem; refusing to overwrite it')
         data[base:base + 8] = b'AURFS01\0'
     for name, source in files.items():
@@ -53,7 +56,7 @@ def pack_files(image, files):
             raise SystemExit(f'File exceeds 64 KiB: {name}')
         slot = empty = -1
         for index in range(32):
-            entry = 513 * 512 + index * 64
+            entry = fs_lba * 512 + 512 + index * 64
             size, used = struct.unpack_from('<II', data, entry + 32)
             if used > 1 or size > 65536:
                 raise SystemExit('Invalid filesystem metadata')
@@ -66,11 +69,13 @@ def pack_files(image, files):
             slot = empty
         if slot < 0:
             raise SystemExit('Filesystem directory is full')
-        entry = 513 * 512 + slot * 64
+        entry = fs_lba * 512 + 512 + slot * 64
         data[entry:entry + 64] = b'\0' * 64
         data[entry:entry + len(name)] = name.encode('ascii')
         struct.pack_into('<II', data, entry + 32, len(payload), 1)
-        offset = (520 + slot * 128) * 512
+        offset = (fs_lba + 8 + slot * 128) * 512
+        if offset + 65536 > len(data):
+            raise SystemExit('Filesystem file extent exceeds image boundary')
         data[offset:offset + 65536] = b'\0' * 65536
         data[offset:offset + len(payload)] = payload
     image.write_bytes(data)
@@ -178,9 +183,13 @@ def main():
     if len(kernel) > 307200:
         raise SystemExit('Kernel + service bundle exceeds loader limit of 600 sectors')
     image = out / 'aurora.img'
-    data = bytearray(image.read_bytes()) if image.exists() else bytearray(16 * 1024 * 1024)
-    if len(data) != 16 * 1024 * 1024:
-        raise SystemExit('Existing disk image is not 16 MiB')
+    image_bytes = (32 if args.self_test else 16) * 1024 * 1024
+    fs_lba = 1024 if args.self_test else 512
+    data = bytearray(image.read_bytes()) if image.exists() else bytearray(image_bytes)
+    if len(data) != image_bytes:
+        raise SystemExit(f'Existing disk image is not {image_bytes // (1024 * 1024)} MiB')
+    if args.self_test and 4608 + len(kernel) > fs_lba * 512:
+        raise SystemExit('Kernel bundle overlaps the filesystem metadata layout')
     data[:512 * 512] = b'\0' * (512 * 512)
     data[:len((out / 'boot.bin').read_bytes())] = (out / 'boot.bin').read_bytes()
     loader = (out / 'loader.bin').read_bytes(); data[512:512 + len(loader)] = loader
@@ -196,7 +205,7 @@ def main():
         run([lld, '-nostdlib', '-z', 'max-page-size=4096', '-T', ROOT / 'sdk/linker.ld', app / 'start.o', app / f'{name}.o', app / 'runtime.o', app / 'lib.o', '-o', app / f'{name}.elf'])
         if (app / f'{name}.elf').stat().st_size > 65536:
             raise SystemExit('Executable exceeds the initial 64 KiB file limit')
-    pack_files(image, {name: out / 'apps' / f'{name}.elf' for name in ('hello', 'calc', 'filedemo')})
+    pack_files(image, {name: out / 'apps' / f'{name}.elf' for name in ('hello', 'calc', 'filedemo')}, fs_lba, image_bytes)
     write_dmar(out / 'qemu-dmar.bin')
     print(f'Built Aurora with Linux tools: {out / "aurora.img"}')
 

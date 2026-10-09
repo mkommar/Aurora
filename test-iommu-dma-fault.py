@@ -33,7 +33,7 @@ def run(backend):
     command = [args.qemu, '-machine', 'q35,accel=tcg', '-m', '128M', *iommu,
                '-drive', f'format=raw,file={build / "aurora.img"}',
                '-drive', f'format=raw,file={development},if=none,id=development',
-               '-device', 'virtio-blk-pci,drive=development,disable-modern=on',
+               '-device', 'virtio-blk-pci,drive=development,disable-legacy=on,iommu_platform=on',
                '-display', 'none', '-net', 'none', '-serial', f'file:{serial}', '-no-reboot']
     with serial.open('w') as output:
         process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
