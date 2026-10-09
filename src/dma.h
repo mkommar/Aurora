@@ -17,6 +17,12 @@
 #define DMA_VTD_PAGES 64
 #define DMA_VTD_MEMORY 0x01000000ULL
 #define DMA_VTD_ROOT 0x01200000ULL
+#define DMA_BACKEND_AMD 3
+#define DMA_AMD_DEVICE_TABLE 0x01400000ULL
+#define DMA_AMD_COMMANDS 0x01600000ULL
+#define DMA_AMD_EVENTS 0x01a00000ULL
+
+#include "amdv.h"
 
 typedef struct {
     u64 address, length;
@@ -43,6 +49,8 @@ static u32 dma_vtd_next_page;
 static u64 dma_vtd_mmio;
 static u64 dma_vtd_root;
 static u64 dma_vtd_cap;
+static u64 dma_amd_mmio;
+static AmdvInfo dma_amd_info;
 #endif
 
 static int dma_aligned(u64 value) { return !(value & (DMA_PAGE - 1)); }
@@ -138,6 +146,56 @@ static int dma_vtd_init(void) {
     if (!dma_wait(0x1c, 1ULL << 31, 1ULL << 31)) return 0;
     return 1;
 }
+static u64 dma_amd_read(u32 offset) { return *(volatile u64 *)(dma_amd_mmio + offset); }
+static void dma_amd_write(u32 offset, u64 value) { *(volatile u64 *)(dma_amd_mmio + offset) = value; }
+static int dma_amd_scan_root(const u8 *root, u32 length, u32 entry_size, AmdvInfo *info) {
+    if (length < 36 || length > 65536 || !amdv_checksum(root, length)) return 0;
+    for (u32 offset = 36; offset + entry_size <= length; offset += entry_size) {
+        u64 address = entry_size == 4 ? *(const u32 *)(root + offset) : *(const u64 *)(root + offset);
+        if (address < 0x100000 || address > 0xffffffffULL - 48) continue;
+        const u8 *table = (const u8 *)(u64)address; u32 size = *(const u32 *)(table + 4);
+        if (size >= 48 && size <= 65536 && address <= 0xffffffffULL - size &&
+            !__builtin_memcmp(table, "IVRS", 4) && amdv_parse_ivrs(table, size, info)) return 1;
+    }
+    return 0;
+}
+static int dma_amd_ivrs(AmdvInfo *info) {
+    u32 ranges[4] = {(*(volatile u16 *)0x40e) * 16U, 1024, 0xe0000, 0x20000};
+    for (int range = 0; range < 4; range += 2)
+        for (u32 address = ranges[range]; address && address < ranges[range] + ranges[range + 1]; address += 16) {
+            const u8 *rsdp = (const u8 *)(u64)address;
+            if (__builtin_memcmp(rsdp, "RSD PTR ", 8) || !amdv_checksum(rsdp, 20)) continue;
+            u32 root = *(const u32 *)(rsdp + 16); if (root < 0x100000 || root > 0xfffff000U) continue;
+            const u8 *rsdt = (const u8 *)(u64)root; u32 length = *(const u32 *)(rsdt + 4);
+            if (!__builtin_memcmp(rsdt, "RSDT", 4) && root <= 0xffffffffU - length && dma_amd_scan_root(rsdt, length, 4, info)) return 1;
+            if (rsdp[15] >= 2 && amdv_checksum(rsdp, 36)) {
+                u64 xsdt_address = *(const u64 *)(rsdp + 24);
+                if (xsdt_address >= 0x100000 && xsdt_address <= 0xffffffffULL - 48) {
+                    const u8 *xsdt = (const u8 *)(u64)xsdt_address; u32 xsdt_length = *(const u32 *)(xsdt + 4);
+                    if (!__builtin_memcmp(xsdt, "XSDT", 4) && dma_amd_scan_root(xsdt, xsdt_length, 8, info)) return 1;
+                }
+            }
+        }
+    return 0;
+}
+static int dma_amd_flush(void) {
+    volatile u32 *command = (volatile u32 *)(u64)DMA_AMD_COMMANDS;
+    u32 tail = (u32)dma_amd_read(0x2008) & 0x1ff0, next = (tail + 16) & 0x1ff0;
+    command[tail / 4] = 8U << 28; command[tail / 4 + 1] = 0; command[tail / 4 + 2] = 0; command[tail / 4 + 3] = 0;
+    __asm__ volatile("mfence" ::: "memory"); dma_amd_write(0x2008, next);
+    for (u32 i = 0; i < 1000000; i++) if (((u32)dma_amd_read(0x2000) & 0x1ff0) == next) return 1;
+    return 0;
+}
+static int dma_amd_init(void) {
+    if (!dma_amd_ivrs(&dma_amd_info)) return 0;
+    dma_amd_mmio = dma_amd_info.register_base;
+    for (u32 i = 0; i < 4096 * 4; i++) ((volatile u64 *)(u64)DMA_AMD_DEVICE_TABLE)[i] = 0;
+    for (u32 i = 0; i < 1024; i++) { ((volatile u32 *)(u64)DMA_AMD_COMMANDS)[i] = 0; ((volatile u32 *)(u64)DMA_AMD_EVENTS)[i] = 0; }
+    dma_amd_write(0x00, DMA_AMD_DEVICE_TABLE | 11); dma_amd_write(0x08, DMA_AMD_COMMANDS | (9ULL << 56));
+    dma_amd_write(0x10, DMA_AMD_EVENTS | (9ULL << 56)); dma_amd_write(0x18, (1ULL << 0) | (1ULL << 2) | (1ULL << 12));
+    return 1;
+}
+static int dma_hw_flush(void) { return dma_backend == DMA_BACKEND_AMD ? dma_amd_flush() : dma_vtd_flush(); }
 #endif
 static int dma_init(int backend) {
     for (u32 i = 0; i < DMA_MAX_DOMAINS; i++) dma_domains[i].active = 0;
@@ -145,7 +203,10 @@ static int dma_init(int backend) {
     dma_hw_faulted = 0; dma_faults = 0;
     dma_backend = backend == DMA_BACKEND_SOFTWARE ? DMA_BACKEND_SOFTWARE : 0;
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
-    if (backend == DMA_BACKEND_HARDWARE && dma_vtd_init()) dma_backend = DMA_BACKEND_HARDWARE;
+    if (backend == DMA_BACKEND_HARDWARE) {
+        if (dma_vtd_init()) dma_backend = DMA_BACKEND_HARDWARE;
+        else if (dma_amd_init()) dma_backend = DMA_BACKEND_AMD;
+    }
 #endif
     return dma_backend != 0;
 }
@@ -155,13 +216,13 @@ static int dma_domain_create(u32 owner, u64 capability, u64 policy_base, u64 pol
     for (u32 i = 0; i < DMA_MAX_DOMAINS; i++) if (!dma_domains[i].active) {
         u64 second_level = 0;
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
-        if (dma_backend == DMA_BACKEND_HARDWARE && !dma_vtd_alloc(&second_level)) return 0;
+        if ((dma_backend == DMA_BACKEND_HARDWARE || dma_backend == DMA_BACKEND_AMD) && !dma_vtd_alloc(&second_level)) return 0;
 #endif
         dma_domains[i] = (DmaDomain){.id = i + 1, .owner = owner, .capability = capability, .active = 1,
                                      .policy_base = policy_base, .policy_end = policy_end,
                                      .second_level = second_level};
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
-        if (dma_backend == DMA_BACKEND_HARDWARE) {
+        if (dma_backend == DMA_BACKEND_HARDWARE || dma_backend == DMA_BACKEND_AMD) {
             u64 *root = (u64 *)(u64)second_level, pdpt, pd;
             if (!dma_vtd_alloc(&pdpt) || !dma_vtd_alloc(&pd)) return 0;
             root[0] = pdpt | 3; ((u64 *)(u64)pdpt)[0] = pd | 3;
@@ -189,7 +250,13 @@ static int dma_assign_device(u32 device, u32 domain_id) {
             context += devfn * 2;
             context[0] = vtd_context_entry((u16)domain_id);
             context[1] = vtd_context_attributes(domain->second_level);
-            if (!dma_vtd_flush()) { dma_device_key[i] = DMA_DEVICE_NONE; dma_device_domain[i] = DMA_DEVICE_NONE; return 0; }
+            if (!dma_hw_flush()) { dma_device_key[i] = DMA_DEVICE_NONE; dma_device_domain[i] = DMA_DEVICE_NONE; return 0; }
+        } else if (dma_backend == DMA_BACKEND_AMD) {
+            u16 device_id = (u16)(((device >> 16) << 8) | (((device >> 11) & 0x1f) << 3));
+            if (device_id >= 4096 || !amdv_has_device(&dma_amd_info, device_id)) return 0;
+            u64 *dte = (u64 *)(u64)(DMA_AMD_DEVICE_TABLE + (u64)device_id * 32);
+            dte[0] = amdv_dte(domain->second_level, (u16)domain_id); dte[1] = domain_id;
+            if (!dma_amd_flush()) { dma_device_key[i] = DMA_DEVICE_NONE; dma_device_domain[i] = DMA_DEVICE_NONE; return 0; }
         }
 #endif
         return 1;
@@ -207,7 +274,7 @@ static int dma_map(u32 domain_id, u64 address, u64 length, u32 permissions) {
             if (address < existing_end && domain->mappings[j].address < end) return 0;
         }
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
-        if (dma_backend == DMA_BACKEND_HARDWARE) {
+        if (dma_backend == DMA_BACKEND_HARDWARE || dma_backend == DMA_BACKEND_AMD) {
             for (u64 page = address; page < end; page += DMA_PAGE) {
                 u32 l1 = (u32)((page >> 39) & 511), l2 = (u32)((page >> 30) & 511), l3 = (u32)((page >> 21) & 511), l4 = (u32)((page >> 12) & 511);
                 u64 *pml4 = (u64 *)(u64)domain->second_level, *pdpt, *pd, *pt;
@@ -217,9 +284,9 @@ static int dma_map(u32 domain_id, u64 address, u64 length, u32 permissions) {
                 pd = (u64 *)(u64)(pdpt[l2] & ~0xfffULL);
                 if (!pd[l3] && !dma_vtd_alloc(&pd[l3])) return 0;
                 pt = (u64 *)(u64)(pd[l3] & ~0xfffULL);
-                pt[l4] = vtd_leaf_entry(page, permissions);
+                pt[l4] = dma_backend == DMA_BACKEND_AMD ? amdv_pte(page, permissions) : vtd_leaf_entry(page, permissions);
             }
-            if (!dma_vtd_flush()) return 0;
+            if (!dma_hw_flush()) return 0;
         }
 #endif
         domain->mappings[i] = (DmaMapping){address, length, permissions, 1};
@@ -234,7 +301,7 @@ static int dma_device_allows(u32 device, u32 domain_id) {
 static int dma_validate(u32 device, u32 domain_id, u64 address, u64 length, u32 permissions) {
     DmaDomain *domain = dma_domain(domain_id);
     if (!domain || !dma_device_allows(device, domain_id) ||
-        !(dma_backend == DMA_BACKEND_SOFTWARE || dma_backend == DMA_BACKEND_HARDWARE) || dma_hw_faulted || !(permissions & (DMA_READ | DMA_WRITE))) return 0;
+        !(dma_backend == DMA_BACKEND_SOFTWARE || dma_backend == DMA_BACKEND_HARDWARE || dma_backend == DMA_BACKEND_AMD) || dma_hw_faulted || !(permissions & (DMA_READ | DMA_WRITE))) return 0;
     for (u32 i = 0; i < DMA_MAX_MAPS; i++) {
         DmaMapping *mapping = &domain->mappings[i];
         if (mapping->active && (mapping->permissions & permissions) == permissions &&
@@ -246,7 +313,7 @@ static DMA_UNUSED int dma_unmap(u32 domain_id, u32 mapping_id) {
     DmaDomain *domain = dma_domain(domain_id);
     if (!domain || !mapping_id || mapping_id > DMA_MAX_MAPS || !domain->mappings[mapping_id - 1].active) return 0;
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
-    if (dma_backend == DMA_BACKEND_HARDWARE) {
+    if (dma_backend == DMA_BACKEND_HARDWARE || dma_backend == DMA_BACKEND_AMD) {
         DmaMapping *mapping = &domain->mappings[mapping_id - 1];
         for (u64 page = mapping->address; page < mapping->address + mapping->length; page += DMA_PAGE) {
             u64 *pml4 = (u64 *)(u64)domain->second_level;
@@ -255,7 +322,7 @@ static DMA_UNUSED int dma_unmap(u32 domain_id, u32 mapping_id) {
             u64 *pd = (u64 *)(u64)(p2 & ~0xfffULL), p3 = pd[(page >> 21) & 511]; if (!p3) continue;
             u64 *pt = (u64 *)(u64)(p3 & ~0xfffULL); pt[(page >> 12) & 511] = 0;
         }
-        if (!dma_vtd_flush()) { dma_hw_faulted = 1; return 0; }
+        if (!dma_hw_flush()) { dma_hw_faulted = 1; return 0; }
     }
 #endif
     domain->mappings[mapping_id - 1].active = 0;
@@ -264,7 +331,7 @@ static DMA_UNUSED int dma_unmap(u32 domain_id, u32 mapping_id) {
 static DMA_UNUSED int dma_revoke(u32 domain_id) {
     DmaDomain *domain = dma_domain(domain_id); if (!domain) return 0;
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
-    if (dma_backend == DMA_BACKEND_HARDWARE) {
+    if (dma_backend == DMA_BACKEND_HARDWARE || dma_backend == DMA_BACKEND_AMD) {
         for (u32 i = 0; i < DMA_MAX_MAPS; i++) if (domain->mappings[i].active) {
             DmaMapping *mapping = &domain->mappings[i];
             for (u64 page = mapping->address; page < mapping->address + mapping->length; page += DMA_PAGE) {
@@ -275,7 +342,7 @@ static DMA_UNUSED int dma_revoke(u32 domain_id) {
                 u64 *pt = (u64 *)(u64)(p3 & ~0xfffULL); pt[(page >> 12) & 511] = 0;
             }
         }
-        if (!dma_vtd_flush()) { dma_hw_faulted = 1; return 0; }
+        if (!dma_hw_flush()) { dma_hw_faulted = 1; return 0; }
     }
 #endif
     for (u32 i = 0; i < DMA_MAX_MAPS; i++) domain->mappings[i].active = 0;
@@ -291,9 +358,9 @@ static DMA_UNUSED int dma_teardown(u32 domain_id) {
 
 static DMA_UNUSED void dma_fault_poll(void) {
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
-    if (dma_backend != DMA_BACKEND_HARDWARE || dma_hw_faulted) return;
-    u32 status = (u32)dma_mmio_read(0x34);
-    if (status & 0xff) { dma_faults++; dma_fault_status = status; dma_hw_faulted = 1; dma_mmio_write(0x34, status); }
+    if ((dma_backend != DMA_BACKEND_HARDWARE && dma_backend != DMA_BACKEND_AMD) || dma_hw_faulted) return;
+    u32 status = dma_backend == DMA_BACKEND_AMD ? (u32)dma_amd_read(0x2020) : (u32)dma_mmio_read(0x34);
+    if (status & 0xff) { dma_faults++; dma_fault_status = status; dma_hw_faulted = 1; if (dma_backend == DMA_BACKEND_AMD) dma_fault_status = amdv_fault_type(*(volatile u64 *)(u64)DMA_AMD_EVENTS); else dma_mmio_write(0x34, status); }
 #endif
 }
 

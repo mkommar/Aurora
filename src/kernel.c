@@ -460,7 +460,7 @@ void kernel_main(void) {
     for(int i=0;i<TASK_COUNT;i++){tasks[i].state=DEAD;task_cpu[i]=-1;task_affinity[i]=1;}
     native_clock_init();
     if (!dma_bootstrap()) panic("DMA isolation unavailable");
-    serial("IOMMU: Intel VT-d enabled\r\n");
+    serial(dma_backend == DMA_BACKEND_AMD ? "IOMMU: AMD-Vi enabled\r\n" : "IOMMU: Intel VT-d enabled\r\n");
     virtio_block_init();
     filesystem_init();
     native_fs_init();vfs_reclaim_orphans();
