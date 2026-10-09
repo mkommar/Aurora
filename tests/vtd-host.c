@@ -29,8 +29,9 @@ int main(void) {
     assert(vtd_leaf_entry(0x2000, VTD_READ | VTD_WRITE) == 0x2003);
     assert(vtd_fault_reason(0x80000031) == 0x31);
     assert(vtd_fault_record_index(0x00000500) == 5);
+    assert(vtd_fault_pending(2) && !vtd_fault_pending(1));
     assert(vtd_fault_record_reason(0x0000003100000000ULL) == 0x31);
-    assert(vtd_fault_record_source(0x0000000012340000ULL) == 0x1234);
+    assert(vtd_fault_record_source(0x0000000000001234ULL) == 0x1234);
     assert(vtd_fault_record_address(0x12345abc) == 0x12345000);
     dmar[50] = 15;
     assert(!vtd_parse_dmar(dmar, sizeof(dmar), &unit));

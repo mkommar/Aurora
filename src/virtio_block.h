@@ -166,10 +166,6 @@ static int virtio_malicious_dma_test(void) {
 }
 static void virtio_malicious_dma_test_poll(void) {
     if (!virtio_dma_test_pending) return;
-    if ((u16)(virtio_dma_test_used[1] - virtio_dma_test_used_before)) {
-        serial("IOMMU TEST: device completed unauthorized chain\r\n");
-        for (;;) __asm__ volatile("cli; hlt");
-    }
     dma_fault_poll();
     if (dma_faulted()) {
         virtio_dma_test_pending = 0; virtio_ready = 0; outb(virtio_port + 18, 0);
@@ -178,7 +174,13 @@ static void virtio_malicious_dma_test_poll(void) {
         if (storage_ipc_complete(&virtio_storage_broker, virtio_storage_sequence,
                                  STORAGE_IPC_OK, 0, 0) == STORAGE_IPC_E_SEQUENCE)
             serial("IOMMU TEST: stale completion rejected after quarantine\r\n");
-    } else if (++virtio_dma_test_polls == 1000000) {
+        return;
+    }
+    if ((u16)(virtio_dma_test_used[1] - virtio_dma_test_used_before)) {
+        serial("IOMMU TEST: device completed unauthorized chain\r\n");
+        for (;;) __asm__ volatile("cli; hlt");
+    }
+    if (++virtio_dma_test_polls == 1000000) {
         serial("IOMMU TEST: no hardware fault was latched\r\n");
         for (;;) __asm__ volatile("cli; hlt");
     }

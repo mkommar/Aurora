@@ -182,9 +182,9 @@ static int dma_amd_ivrs(AmdvInfo *info) {
     return 0;
 }
 static int dma_amd_flush(void) {
-    volatile u32 *command = (volatile u32 *)(u64)DMA_AMD_COMMANDS;
+    volatile u64 *command = (volatile u64 *)(u64)DMA_AMD_COMMANDS;
     u32 tail = (u32)dma_amd_read(0x2008) & 0x1ff0, next = (tail + 16) & 0x1ff0;
-    command[tail / 4] = 8U << 28; command[tail / 4 + 1] = 0; command[tail / 4 + 2] = 0; command[tail / 4 + 3] = 0;
+    command[tail / 8] = 8ULL << 60; command[tail / 8 + 1] = 0;
     __asm__ volatile("mfence" ::: "memory"); dma_amd_write(0x2008, next);
     for (u32 i = 0; i < 1000000; i++) if (((u32)dma_amd_read(0x2000) & 0x1ff0) == next) return 1;
     return 0;
@@ -249,7 +249,8 @@ static int dma_domain_create(u32 owner, u64 capability, u64 policy_base, u64 pol
         if (dma_backend == DMA_BACKEND_HARDWARE || dma_backend == DMA_BACKEND_AMD) {
             u64 *root = (u64 *)(u64)second_level, pdpt, pd;
             if (!dma_vtd_alloc(&pdpt) || !dma_vtd_alloc(&pd)) return 0;
-            root[0] = pdpt | 3; ((u64 *)(u64)pdpt)[0] = pd | 3;
+            root[0] = dma_backend == DMA_BACKEND_AMD ? amdv_table_entry(pdpt, 3) : pdpt | 3;
+            ((u64 *)(u64)pdpt)[0] = dma_backend == DMA_BACKEND_AMD ? amdv_table_entry(pd, 2) : pd | 3;
         }
 #endif
         return i + 1;
@@ -302,11 +303,11 @@ static int dma_map(u32 domain_id, u64 address, u64 length, u32 permissions) {
             for (u64 page = address; page < end; page += DMA_PAGE) {
                 u32 l1 = (u32)((page >> 39) & 511), l2 = (u32)((page >> 30) & 511), l3 = (u32)((page >> 21) & 511), l4 = (u32)((page >> 12) & 511);
                 u64 *pml4 = (u64 *)(u64)domain->second_level, *pdpt, *pd, *pt;
-                if (!pml4[l1]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pml4[l1] = table | 3; }
+                if (!pml4[l1]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pml4[l1] = dma_backend == DMA_BACKEND_AMD ? amdv_table_entry(table, 3) : table | 3; }
                 pdpt = (u64 *)(u64)(pml4[l1] & ~0xfffULL);
-                if (!pdpt[l2]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pdpt[l2] = table | 3; }
+                if (!pdpt[l2]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pdpt[l2] = dma_backend == DMA_BACKEND_AMD ? amdv_table_entry(table, 2) : table | 3; }
                 pd = (u64 *)(u64)(pdpt[l2] & ~0xfffULL);
-                if (!pd[l3]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pd[l3] = table | 3; }
+                if (!pd[l3]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pd[l3] = dma_backend == DMA_BACKEND_AMD ? amdv_table_entry(table, 1) : table | 3; }
                 pt = (u64 *)(u64)(pd[l3] & ~0xfffULL);
                 pt[l4] = dma_backend == DMA_BACKEND_AMD ? amdv_pte(page, permissions) : vtd_leaf_entry(page, permissions);
             }
@@ -384,14 +385,15 @@ static DMA_UNUSED void dma_fault_poll(void) {
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
     if ((dma_backend != DMA_BACKEND_HARDWARE && dma_backend != DMA_BACKEND_AMD) || dma_hw_faulted) return;
     u32 status = dma_backend == DMA_BACKEND_AMD ? (u32)dma_amd_read(0x2020) : (u32)dma_mmio_read(0x34);
-    if (status & 0xff) {
+    if (dma_backend == DMA_BACKEND_HARDWARE ? vtd_fault_pending(status) : (status & (1U << 3))) {
         u32 source = DMA_DEVICE_NONE, reason = 0; u64 address = 0;
         if (dma_backend == DMA_BACKEND_AMD) {
             u64 *event = (u64 *)(u64)DMA_AMD_EVENTS;
             reason = amdv_fault_type(event[0]); source = amdv_fault_source(event[0]);
             address = amdv_fault_address(event[1]);
+            if (!reason || source == DMA_DEVICE_NONE || !address) return;
         } else {
-            u32 index = vtd_fault_record_index(status), offset = 0x40 + index * 16;
+            u32 index = vtd_fault_record_index(status), offset = VTD_FAULT_RECORD_OFFSET + index * 16;
             u64 low = dma_mmio_read(offset), high = dma_mmio_read(offset + 8);
             reason = vtd_fault_record_reason(high); source = vtd_fault_record_source(high);
             address = vtd_fault_record_address(low);

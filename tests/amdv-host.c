@@ -20,8 +20,9 @@ int main(void) {
     assert(amdv_parse_ivrs(ivrs, sizeof(ivrs), &info));
     assert(info.register_base == 0xfed90000ULL && info.device_count == 3);
     assert(amdv_has_device(&info, 24) && amdv_has_device(&info, 40) && !amdv_has_device(&info, 48));
-    assert(amdv_dte(0x120000, 3) == (0x120000ULL | 3 | (4ULL << 9)));
-    assert(amdv_pte(0x4000, 3) == 0x4003 && amdv_fault_type(2ULL << 28) == 2);
+    assert(amdv_dte(0x120000, 3) == (0x120000ULL | 3 | AMDV_DEV_PERM_READ | AMDV_DEV_PERM_WRITE | (4ULL << 9)));
+    assert(amdv_table_entry(0x120000, 3) == (0x120000ULL | 1ULL | AMDV_DEV_PERM_READ | AMDV_DEV_PERM_WRITE | (3ULL << 9)));
+    assert(amdv_pte(0x4000, 3) == (0x4000ULL | AMDV_DEV_PERM_READ | AMDV_DEV_PERM_WRITE) && amdv_fault_type(0x2008ULL << 48) == 0x2008);
     assert(amdv_fault_source(0x1234) == 0x1234 && amdv_fault_address(0x12345abc) == 0x12345000);
     ivrs[50] = 15; assert(!amdv_parse_ivrs(ivrs, sizeof(ivrs), &info));
     puts("PASS AMD-Vi IVRS parsing, device IDs, DTE/PTE construction and fault decoding");
