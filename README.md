@@ -45,6 +45,12 @@ timestamps are stored, crash orphans are reclaimed at mount, a damaged GPT
 copy is recovered from the other one, and `fsck-aurora` checks GPT, ext2,
 FAT32 and AuroraFS from inside Aurora; see [FILESYSTEMS.md](FILESYSTEMS.md)
 and `python test-filesystems.py`, which tests power-cut recovery and preservation of ordinary files.
+Native processes also have a kernel-backed, read-only `/proc` namespace. It
+provides `/proc/self`, live numeric process directories with `status`,
+`cmdline` and `fd`, plus `/proc/meminfo`, `/proc/uptime` and `/proc/mounts`.
+Fields are limited to data maintained by Aurora; unsupported Linux proc fields
+are omitted. The native foundations regression exercises visibility, traversal,
+dynamic reads and invalid process IDs.
 `python test-recovery.py` injects GPT and ext2 recovery I/O failures on a host
 in-memory device; see [recovery guarantees and limits](FILESYSTEMS.md).
 

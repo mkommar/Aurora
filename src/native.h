@@ -98,6 +98,7 @@ _Static_assert(TASK_COUNT*NATIVE_SIZE/0x40000000ULL<=16,"alias directory needs m
 static u32 native_free_pages,native_lazy_pages;
 static u32 native_page_hint;
 volatile u64 native_lazy_faults,native_lazy_commit_failures;
+#include "native_proc.h"
 static u32 native_space(u32 id){return native_vm_attached[id]?native_vm_owner[id]:id;}
 volatile u64 native_vm_shootdowns;
 static void native_vm_barrier(u32 id){
@@ -578,6 +579,7 @@ static i64 native_getdents(u64 fd,u64 address,u64 size){
     NativeProcess *p=&native_process[current_task];if(fd>=NATIVE_FDS||p->fd[fd].kind!=1)return -9;
     NativeFile *f=&NFILES[p->fd[fd].index];if(f->kind!=2)return -20;
     u8 *out=native_buffer(current_task,address,size,1);if(!out)return -14;
+    if(proc_is_entry(p->fd[fd].index))return proc_getdents(p->fd[fd].index,&native_descriptions[p->fd[fd].description].offset,out,size);
     if(aurorafs_path(f->path)){NativeDescription *of=&native_descriptions[p->fd[fd].description];u64 done=0;
         for(u32 slot=(u32)of->offset;slot<FS_FILES;slot++){if(!directory[slot].used){of->offset=slot+1;continue;}
             u64 length=(20+ns_length(directory[slot].name)+7)&~7ULL;if(length>size-done){if(!done)return -22;break;}
@@ -717,6 +719,7 @@ static i64 native_io(u64 descriptor,u64 address,u64 size,int write){
  * identity; FAT supplies its timestamps; AuroraFS slots are the inode. The
  * cached size is refreshed here so aliases of one inode do not go stale. */
 static i64 native_stat(int index,u64 address,int special){
+    if(proc_is_entry(index)){u8 *out=native_buffer(current_task,address,144,1);return out?proc_stat(index,out):-14;}
     if(!special&&ns_equal(NFILES[index].path,"/dev/null"))special=1;
     u8 *out=native_buffer(current_task,address,144,1);if(!out)return -14;memset(out,0,144);
     *(u64 *)(out+16)=1;*(u32 *)(out+28)=1000;*(u32 *)(out+32)=1000;*(u64 *)(out+56)=4096;
@@ -1072,6 +1075,7 @@ static Frame *native_dispatch(Frame *f){
             if((mode&0170000)==0040000){result=-21;break;}result=vfs_unlink(resolved);
         }else{int index=native_find(path);if(index<0)result=-2;else if(NFILES[index].kind==2)result=-21;else if(!native_writable(path))result=-30;else{NFILES[index].kind=0;result=native_commit(index)?0:-5;}}break;}
     case 89:if(!native_user_path(a,path))result=-14;else if(ns_equal(path,"/proc/self/exe")){u64 length=ns_length(p->exe);if(length>c)length=c;void *out=native_buffer(current_task,b,length,1);if(!out)result=-14;else{memcpy(out,p->exe,length);result=length;}}
+        else if(proc_find(path)>=0){int link=native_find(path);void *out=native_buffer(current_task,b,c,1);result=out?proc_readlink(link,out,c):-14;}
         else if(ext2_ready){void *out=native_buffer(current_task,b,c,1);size_t count=0;if(!out)result=-14;else{int error=ext4_readlink(path,out,c,&count);result=error?-error:(i64)count;}}else result=-22;break;
     case 90:case 91:case 268:case 452:{int index;u32 mode=n==268||n==452?c:b;
         if(n==268||n==452){if(n==452&&d){result=-95;break;}result=native_at_path((i64)a,b,path);if(result)break;index=native_find(path);}
