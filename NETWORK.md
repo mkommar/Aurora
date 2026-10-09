@@ -61,6 +61,22 @@ client reaches that service at `10.0.2.2:<host-port>`.
   QEMU's crypto backend; on Windows the platform implementation uses
   `CryptGenRandom`. The host and emulator remain trusted components.
 
+## IPRoute2 boundary
+
+IPRoute2 is a later userspace package, not a current claim of Linux networking
+compatibility. Its first Aurora target is a read-only discovery subset backed by
+`NETLINK_ROUTE`: `RTM_GETLINK`, `RTM_GETADDR`, and `RTM_GETROUTE`. The kernel
+must first provide netlink-family socket creation and bind, aligned netlink
+header/attribute validation, multipart dump sequencing, interface/address/route
+records, and deterministic errors. Acceptance fixtures will exercise `ip link`,
+`ip addr`, and `ip route` against QEMU's DHCP interface and reject truncated,
+misaligned, overlong, or wrong-family messages.
+
+Mutation commands, IPv6, qdisc, policy routing and physical-NIC discovery are
+not part of that subset. Until those fixtures pass, the LFS systemd-book
+package order is a reference for building prerequisites, not evidence that
+the Linux `ip` command can run on Aurora.
+
 TLS verification uses `/etc/ssl/cert.pem` and the boot-time RTC. Certificate
 chain, hostname, and expiry verification remain enabled. The pinned Mozilla
 CA snapshot is dated August 13, 2026; update the bundle and its lock-file hash

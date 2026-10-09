@@ -4,6 +4,10 @@ Updated 2026-10-09. The original 20 items retain their numbering. Items 1-6
 have working implementations with the limits below; items 7-20 are partial or
 planned work. Retain Aurora's original kernel, ext2 for
 development, FAT32 for exchange, and the preference for reusable GNU code.
+For package/tool sequencing, use the [Linux From Scratch systemd book](https://www.linuxfromscratch.org/lfs/view/systemd/)
+as a tooling and dependency reference only. Aurora keeps its musl ABI, custom
+kernel, freestanding boot path and Debian-format package target; LFS commands
+and package order are not claims of Linux-kernel compatibility.
 The 2026-09-18 platform work is described in [PLATFORM.md](PLATFORM.md) and
 verified by `test-platform.py`.
 
@@ -24,6 +28,8 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    tags and tick deadlines for both the AuroraFS boot volume and the ATA
    development path, and the legacy AuroraFS calls now sleep under the filesystem
    mutex. Remaining: IOMMU/DMA isolation and moving storage into a service.
+   The existing `SERVICE_STORAGE` ABI is only a reserved contract; it is not
+   an active storage service and must not be treated as one.
 2. **Complete build-critical POSIX and C-runtime support.** Implemented:
    poll/select, blocking waits, shared-VM musl pthreads, TLS, futex wait/wake/
    requeue, robust mutex cleanup and shared descriptor/filesystem state. A small
@@ -74,12 +80,14 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    Remaining: an ext2 journal or ordered metadata writes (uncommitted data still
    depends on `sync`), FAT32 dirty-bit handling, and a repairing mode for the
    checker. See [FILESYSTEMS.md](FILESYSTEMS.md).
-5. **Networking.** Implemented for IPv4 clients in QEMU TCG: transitional
+5. **Networking.** Implemented for IPv4 clients and bounded TCP listeners in
+    QEMU TCG: transitional
    VirtIO-net, pinned lwIP 2.2.1, Ethernet/ARP/ICMP, TCP/UDP, DHCP, musl DNS,
    nonblocking sockets, poll/select, descriptor sharing and eventfd. Network
    processing remains in the kernel under the native compatibility lock.
-   Remaining: listen/accept, Unix-domain sockets, IPv6, DHCP-derived resolver
-   updates, DNS-over-TCP, broader options and physical NIC drivers. See
+   `listen`/`accept` are covered by the repository-transfer regression.
+   Remaining: Unix-domain sockets, IPv6, DHCP-derived resolver updates,
+   DNS-over-TCP, broader options and physical NIC drivers. See
    [NETWORK.md](NETWORK.md) and `test-network.py`.
 6. **Verified HTTPS downloads.** Implemented: curl 8.22.0 with Mbed TLS 3.6.7,
    VirtIO-rng entropy, RTC time, a pinned CA bundle, certificate/hostname/expiry
@@ -95,7 +103,12 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    bounded `#!` interpreter execution and an allocator regression fix support
    this work. Finish and validate the native ports of diffutils, patch, m4,
    Autoconf, Automake, Libtool, Bison, Flex, Perl/Python and compression tools.
-   See [PACKAGES.md](PACKAGES.md) for evidence and remaining limits.
+   See [PACKAGES.md](PACKAGES.md) for evidence and remaining limits. The
+   dependency-ordered LFS reference track is: binutils, GCC, Aurora-compatible
+   API headers (not a Linux kernel import), m4, Perl, Autoconf, Automake,
+   Libtool, Bison, Flex, Texinfo, and compression/file utilities. Each step
+   needs a clean configure/build/test, staged install, package manifest and an
+   Aurora regression before the next prerequisite is promoted.
 8. **Rebuild the compiler and tool suite inside Aurora.** GNU Make 4.4.1 has
    configured from a clean archive, compiled and staged inside Aurora. Progress
    through Bash and other GNU packages, then binutils, the C runtime and GCC with its
@@ -130,6 +143,40 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
      source archive and host network egress. Full dpkg/APT lifecycle behavior,
      guest build/install validation and authenticated release policy remain
      open. See [PACKAGES.md](PACKAGES.md).
+## Microkernel and tooling sequence
+
+These are the next bounded milestones, in dependency order. A milestone is not
+complete until its acceptance test is recorded; a design document or reserved
+ABI alone does not count.
+
+1. **Loadable user-service foundation (current milestone).** Package an
+   already-linked ring-3 service in `AURMOD1`, validate bounds and SHA-256, and
+   exercise the unload policy with the host regression. The self-test build
+   emits `build/selftest/modules/probe.mod`. Acceptance: the module-format host
+   test passes and a malformed/hash-corrupt module is rejected before staging.
+   Runtime activation remains blocked until page-table grants, capability
+   plumbing, service restart and timeout handling are implemented.
+2. **DMA/IOMMU isolation.** Define a device-domain allocator and page-table
+   ownership contract around `SERVICE_STORAGE`/`SERVICE_NET`; implement real
+   VT-d/AMD-Vi page-table programming and fault handling, then test that a
+   device cannot DMA outside its grant in QEMU or on selected hardware.
+   Acceptance requires a hardware-enforced negative DMA test. Software buffer
+   bounds alone do not satisfy this milestone.
+3. **Storage service extraction.** Move one non-boot block path behind the
+   existing ring shape only after milestone 2, with bounded request ownership,
+   completion/error/cancel messages and service restart behavior. Keep boot
+   recovery in-kernel until the service passes read/write/flush, malformed
+   request and power-loss regressions on disposable images.
+4. **Networking and IPRoute2 subset.** Before packaging IPRoute2, implement and
+   test `NETLINK_ROUTE`, `RTM_GETLINK`, `RTM_GETADDR`, and `RTM_GETROUTE`, with
+   aligned attribute validation, dump sequencing and stable errors. Do not
+   claim `ip` compatibility until `ip link`, `ip addr`, and `ip route` fixture
+   tests pass; IPv6, mutation commands and qdisc support remain separate.
+5. **Debian-format package closure.** Promote the LFS-ordered recipes only
+   after each package has an Aurora-native configure/test result. Require
+   deterministic `.deb` output, dependency metadata, ownership-aware
+   install/upgrade/removal tests, and authenticated Release metadata.
+
 10. **Development terminal and editor.** Add ANSI/VT behavior, scrollback, PTYs,
     Readline, complete job control, multiple terminals and an editor such as
     GNU nano. Make compiler output and source editing practical.
@@ -180,12 +227,17 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    images, including malformed GPTs, failed writes/flushes and interrupted
    recovery. `test-recovery.py` exercises the production recovery routines
    against an in-memory device; `test-filesystems.py` covers guest behavior.
-2. Extend the completed clean-configure GNU Make build to the other GNU ports;
-   retain `config.log`, syscall failures and test output. Add prerequisites
-   needed by the next package, then stage its installation and record ownership.
-3. Improve terminal scrollback/log capture, then PTYs and job control. Measure
+2. Validate the new AURMOD1 host gate, then add the first guarded page-table and
+   capability hooks needed for a runtime user-service loader. Do not activate
+   storage or network drivers through it yet.
+3. Extend the completed clean-configure GNU Make build to the LFS-ordered GNU
+   ports; retain `config.log`, syscall failures and test output. Add
+   prerequisites needed by the next package, then stage its installation and
+   record ownership.
+4. Define and test the netlink/rtnetlink subset before attempting IPRoute2.
+5. Improve terminal scrollback/log capture, then PTYs and job control. Measure
    `make -j1/-j2/-j4`, memory, task limits and lock contention before a GCC rebuild.
-4. Expand the boot bundle budget before adding substantial kernel subsystems:
+6. Expand the boot bundle budget before adding substantial kernel subsystems:
    `build.ps1` currently enforces the loader's 240 KiB limit.
 
 ## Reuse and decisions

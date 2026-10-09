@@ -117,6 +117,13 @@ def main():
             header.append(f'#define {service.upper()}_{boundary.upper()} 0x{values["__" + boundary]}ULL')
         header.extend([f'extern const u8 {service}_image[];', f'#define {service}_image_size {Path(out / (service + ".bin")).stat().st_size}ULL'])
         bundle.extend(['align 16', f'global {service}_image', f'{service}_image:', f'incbin "{out / (service + ".bin")}"'])
+        if service == 'probe':
+            modules = out / 'modules'
+            modules.mkdir(exist_ok=True)
+            run(['python3', ROOT / 'tools/module-format.py', 'create',
+                 '--input', out / 'probe.bin', '--output', modules / 'probe.mod',
+                 '--entry', '0', '--text-end', str(int(values['__text_end'], 16) - 0x400000),
+                 '--ro-end', str(int(values['__ro_end'], 16) - 0x400000)])
     (out / 'images.h').write_text('\n'.join(header) + '\n')
     (out / 'images.asm').write_text('\n'.join(bundle) + '\n')
     run([nasm, '-f', 'elf64', out / 'images.asm', '-o', out / 'images.o'])
