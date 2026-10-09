@@ -143,7 +143,13 @@ include-all DMAR/DRHD table at the emulated unit's `0xfed90000` because the
 stock SeaBIOS used by QEMU 8.2 does not publish one. The paired AMD harness
 uses `amd-iommu,pt=off`, injects IVRS at QEMU's `0xfed80000` AMD-Vi BAR, and
 checks explicit VirtIO source IDs. The fail-closed tests verify that a
-guest without DMAR or IVRS refuses DMA-backed startup. The VirtIO path now crosses the
+guest without DMAR or IVRS, or with a malformed table, refuses DMA-backed
+startup. The gated `test-iommu-dma-fault.py` negative run submits an actual
+unauthorized VirtIO data descriptor and waits for the QEMU IOMMU to record and
+latch the fault before quarantining the device. QEMU 8.2's current
+legacy/transitional VirtIO PCI model does not expose `iommu_platform=on`, so
+the harness currently provides publication/timeout evidence rather than a
+passing hardware negative. The VirtIO path now crosses the
 versioned `storage_service.h` broker seam, which validates a
 single bounded request and owns its completion/cancel lifecycle; it is not yet
 a ring-3 service and does not transfer device ownership out of the kernel. Only one
@@ -154,5 +160,6 @@ ticks rather than consumed CPU time. Task and page-table storage is fixed at
 disk-backed paging; overcommitted memory that is finally touched without free
 RAM ends the faulting process rather than reclaiming pages. AMD-Vi uses the
 bounded device-table/page-table path and command-buffer invalidation; interrupt
-remapping, arbitrary PCI functions, and broader physical-device coverage remain
-unsupported and fail closed.
+remapping, arbitrary PCI functions, multi-device attacks, and broader
+physical-device coverage remain unsupported and fail closed. The self-test
+injection is not compiled into production images.

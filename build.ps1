@@ -1,4 +1,4 @@
-param([string]$LlvmBin = $env:AURORA_LLVM, [switch]$SelfTest)
+param([string]$LlvmBin = $env:AURORA_LLVM, [switch]$SelfTest, [switch]$DmaFaultTest)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 if (!$LlvmBin) {
@@ -64,6 +64,7 @@ Invoke-Checked $nasm @('-f','elf64',"$output/images.asm",'-o',"$output/images.o"
 . "$PSScriptRoot/build-network.ps1"
 $kernelFlags = $flags + $fsFlags + @('-I',$output,'-Os')
 if ($SelfTest) { $kernelFlags += '-DAURORA_SELF_TEST=1' }
+if ($DmaFaultTest) { if (!$SelfTest) { throw 'DmaFaultTest requires SelfTest' }; $kernelFlags += '-DAURORA_DMA_FAULT_TEST=1' }
 Invoke-Checked "$LlvmBin/clang.exe" ($kernelFlags + @('-c','src/kernel.c','-o',"$output/kernel.o"))
 Invoke-Checked "$LlvmBin/ld.lld.exe" (@('-nostdlib','--gc-sections','-T','src/linker.ld',"$output/entry.o", "$output/traps.o", "$output/kernel.o", "$output/images.o") + $fsObjects + $netObjects + @('-o',"$output/kernel.elf"))
 Invoke-Checked "$LlvmBin/llvm-objcopy.exe" @('-O','binary',"$output/kernel.elf", "$output/kernel.bin")

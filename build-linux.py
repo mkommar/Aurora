@@ -81,6 +81,7 @@ def main():
     parser.add_argument('--llvm-bin', default=os.environ.get('AURORA_LLVM'))
     parser.add_argument('--output', default='build')
     parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--dma-fault-test', action='store_true')
     args = parser.parse_args()
     out = ROOT / args.output
     out.mkdir(parents=True, exist_ok=True)
@@ -166,6 +167,10 @@ def main():
         net_objects.append(target)
 
     kernel_flags = flags + fat_flags + ['-I', str(out), '-Os']
+    if args.dma_fault_test and not args.self_test:
+        raise SystemExit('--dma-fault-test requires --self-test')
+    if args.dma_fault_test:
+        kernel_flags.append('-DAURORA_DMA_FAULT_TEST=1')
     compile_source(clang, kernel_flags + service_flags, ROOT / 'src/kernel.c', out / 'kernel.o')
     run([lld, '-nostdlib', '--gc-sections', '-T', ROOT / 'src/linker.ld', out / 'entry.o', out / 'traps.o', out / 'kernel.o', out / 'images.o', *fs_objects, *net_objects, '-o', out / 'kernel.elf'])
     run([objcopy, '-O', 'binary', out / 'kernel.elf', out / 'kernel.bin'])

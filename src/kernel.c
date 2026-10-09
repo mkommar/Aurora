@@ -77,6 +77,9 @@ static void storage_service_reap(void);
 static void native_timers(void);
 static void native_wake_waiters(void);
 static void net_poll(void);
+#if defined(AURORA_SELF_TEST) && defined(AURORA_DMA_FAULT_TEST)
+static void virtio_malicious_dma_test_poll(void);
+#endif
 static Gate idt[256];
 #define DMA_DOMAIN_STORAGE 1
 #define DMA_DOMAIN_NET 2
@@ -260,6 +263,9 @@ static int port_allowed(u64 port,u64 width,int read) {
 }
 Frame *schedule(void) {
     compatibility_enter();
+#if defined(AURORA_SELF_TEST) && defined(AURORA_DMA_FAULT_TEST)
+    virtio_malicious_dma_test_poll();
+#endif
     dma_fault_poll();
     if (dma_faults != dma_faults_reported) {
         dma_faults_reported = dma_faults;
@@ -462,6 +468,9 @@ void kernel_main(void) {
     if (!dma_bootstrap()) panic("DMA isolation unavailable");
     serial(dma_backend == DMA_BACKEND_AMD ? "IOMMU: AMD-Vi enabled\r\n" : "IOMMU: Intel VT-d enabled\r\n");
     virtio_block_init();
+#if defined(AURORA_SELF_TEST) && defined(AURORA_DMA_FAULT_TEST)
+    if (!virtio_malicious_dma_test()) panic("DMA fault injection was not blocked");
+#endif
     filesystem_init();
     native_fs_init();vfs_reclaim_orphans();
     u64 fb=*(volatile u32 *)0x928;

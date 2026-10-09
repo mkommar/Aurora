@@ -66,4 +66,16 @@ static VTD_UNUSED u32 vtd_fault_reason(u32 fault_status) {
     return fault_status & 0xff;
 }
 
+static VTD_UNUSED u32 vtd_fault_record_index(u32 fault_status) {
+    return (fault_status >> 8) & 0xf;
+}
+
+static VTD_UNUSED u32 vtd_fault_record_source(u64 record_low) {
+    return (u32)((record_low >> 16) & 0xffff);
+}
+
+static VTD_UNUSED u64 vtd_fault_record_address(u64 record_high) {
+    return record_high & ~0xfffULL;
+}
+
 #endif

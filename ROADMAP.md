@@ -177,14 +177,19 @@ ABI alone does not count.
    construction and fault decoding; `test-iommu.py`/`test-amd-iommu.py` boot
    the VirtIO block path with QEMU's Intel or AMD IOMMU model, while the paired
    fail-closed tests verify startup refusal without DMAR or IVRS. The
-   QEMU negative boundary is deliberate: this tree has no malicious PCI test
-   device, so unauthorized mapping and fault behavior are covered by the host
-   table tests and the no-IOMMU refusal test, not claimed as a guest DMA attack.
-   AMD-Vi IVHD ranges are limited to parsed explicit IDs/ranges, interrupt
-   remapping and arbitrary PCI functions remain unsupported, and selected
-   physical hardware must stay fail-closed. The QEMU negative tests do not
-   claim unauthorized DMA blocking because no malicious PCI transaction is
-   injected.
+   `test-iommu-dma-fault.py` is a bounded negative harness: only the self-test
+   image accepts `--dma-fault-test`, and it publishes a real transitional
+   VirtIO descriptor whose data address is outside the storage second-level
+   domain, then waits for the hardware fault latch with a bounded timeout. The
+   current QEMU 8.2 legacy/transitional VirtIO PCI model rejects
+   `iommu_platform=on`; without that modern-only transport property it does not
+   route the descriptor through the IOMMU, so the harness records publication
+   but does not claim a passing hardware negative. Completing this acceptance
+   test requires a modern VirtIO PCI transport in Aurora or a QEMU malicious
+   device fixture. The positive boot tests and no-DMAR/no-IVRS or malformed-table
+   fail-closed tests remain separate. Interrupt remapping, arbitrary PCI
+   functions, multi-device attacks, and physical hardware still require
+   independent work and selected hardware must stay fail-closed.
 3. **Storage service extraction.** The bounded guest implementation is added:
    the built-in storage service is compiled as a candidate ring-3 task, reaches a
    capability-gated `SYS_STORAGE` endpoint, and uses the existing VirtIO broker

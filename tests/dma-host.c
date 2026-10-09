@@ -26,6 +26,13 @@ int main(void) {
     assert(dma_teardown(domain)); assert(!dma_domain(domain));
     assert(!dma_init(DMA_BACKEND_HARDWARE));
     assert(!dma_domain_create(1, 1, 0x100000, 0x110000));
+    assert(dma_init(DMA_BACKEND_SOFTWARE));
+    domain = dma_domain_create(7, 1, 0x100000, 0x110000);
+    assert(domain && dma_assign_device(3, domain));
+    assert(dma_fault_latch(1, 3, 0x0c000000, 7));
+    assert(dma_faulted() && dma_fault_count() == 1 && dma_fault_source_id() == 3);
+    assert(!dma_fault_latch(1, 3, 0x0c000000, 7) && dma_fault_count() == 1);
+    assert(!dma_validate(3, domain, 0x100000, 0x1000, DMA_READ));
     puts("PASS DMA domain ownership, bounds, lifecycle and fail-closed backend");
     return 0;
 }

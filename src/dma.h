@@ -44,6 +44,9 @@ static int dma_backend;
 static int dma_hw_faulted;
 static volatile u64 dma_faults;
 static volatile u32 dma_fault_status;
+static volatile u32 dma_fault_source;
+static volatile u64 dma_fault_address;
+static volatile u32 dma_fault_reason_code;
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
 static u32 dma_vtd_next_page;
 static u64 dma_vtd_mmio;
@@ -200,7 +203,8 @@ static int dma_hw_flush(void) { return dma_backend == DMA_BACKEND_AMD ? dma_amd_
 static int dma_init(int backend) {
     for (u32 i = 0; i < DMA_MAX_DOMAINS; i++) dma_domains[i].active = 0;
     for (u32 i = 0; i < DMA_MAX_DEVICES; i++) { dma_device_key[i] = DMA_DEVICE_NONE; dma_device_domain[i] = DMA_DEVICE_NONE; }
-    dma_hw_faulted = 0; dma_faults = 0;
+    dma_hw_faulted = 0; dma_faults = 0; dma_fault_status = 0;
+    dma_fault_source = DMA_DEVICE_NONE; dma_fault_address = 0; dma_fault_reason_code = 0;
     dma_backend = backend == DMA_BACKEND_SOFTWARE ? DMA_BACKEND_SOFTWARE : 0;
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
     if (backend == DMA_BACKEND_HARDWARE) {
@@ -210,6 +214,26 @@ static int dma_init(int backend) {
 #endif
     return dma_backend != 0;
 }
+
+/* A hardware fault is terminal for this boot. Identical records can be
+ * reported more than once while the unit's status bit is being drained. */
+static int dma_fault_latch(u32 status, u32 source, u64 address, u32 reason) {
+    if (!status || dma_hw_faulted) return 0;
+    dma_fault_status = status; dma_fault_source = source;
+    dma_fault_address = address; dma_fault_reason_code = reason;
+    dma_faults++; dma_hw_faulted = 1;
+    for (u32 i = 0; i < DMA_MAX_DOMAINS; i++)
+        for (u32 j = 0; j < DMA_MAX_MAPS; j++) dma_domains[i].mappings[j].active = 0;
+    for (u32 i = 0; i < DMA_MAX_DEVICES; i++)
+        if (dma_device_domain[i] != DMA_DEVICE_NONE) dma_device_domain[i] = DMA_DEVICE_NONE;
+    return 1;
+}
+
+static DMA_UNUSED int dma_faulted(void) { return dma_hw_faulted; }
+static DMA_UNUSED u64 dma_fault_count(void) { return dma_faults; }
+static DMA_UNUSED u32 dma_fault_source_id(void) { return dma_fault_source; }
+static DMA_UNUSED u64 dma_fault_address_value(void) { return dma_fault_address; }
+static DMA_UNUSED u32 dma_fault_reason_value(void) { return dma_fault_reason_code; }
 static int dma_domain_create(u32 owner, u64 capability, u64 policy_base, u64 policy_end) {
     if (!dma_backend || !capability || policy_end <= policy_base ||
         !dma_aligned(policy_base) || !dma_aligned(policy_end)) return 0;
@@ -360,7 +384,21 @@ static DMA_UNUSED void dma_fault_poll(void) {
 #if !defined(__STDC_HOSTED__) || !__STDC_HOSTED__
     if ((dma_backend != DMA_BACKEND_HARDWARE && dma_backend != DMA_BACKEND_AMD) || dma_hw_faulted) return;
     u32 status = dma_backend == DMA_BACKEND_AMD ? (u32)dma_amd_read(0x2020) : (u32)dma_mmio_read(0x34);
-    if (status & 0xff) { dma_faults++; dma_fault_status = status; dma_hw_faulted = 1; if (dma_backend == DMA_BACKEND_AMD) dma_fault_status = amdv_fault_type(*(volatile u64 *)(u64)DMA_AMD_EVENTS); else dma_mmio_write(0x34, status); }
+    if (status & 0xff) {
+        u32 source = DMA_DEVICE_NONE, reason = 0; u64 address = 0;
+        if (dma_backend == DMA_BACKEND_AMD) {
+            u64 *event = (u64 *)(u64)DMA_AMD_EVENTS;
+            reason = amdv_fault_type(event[0]); source = amdv_fault_source(event[0]);
+            address = amdv_fault_address(event[1]);
+        } else {
+            u32 index = vtd_fault_record_index(status), offset = 0x40 + index * 16;
+            u64 low = dma_mmio_read(offset), high = dma_mmio_read(offset + 8);
+            reason = vtd_fault_reason((u32)low); source = vtd_fault_record_source(low);
+            address = vtd_fault_record_address(high);
+        }
+        dma_fault_latch(status, source, address, reason);
+        if (dma_backend == DMA_BACKEND_HARDWARE) dma_mmio_write(0x34, status);
+    }
 #endif
 }
 
