@@ -35,10 +35,19 @@ typedef struct __attribute__((packed)) {
 typedef int (*StorageIpcDmaCheck)(u64 address, u64 length, u32 permissions);
 
 typedef struct {
-    u32 owner, device, dma_domain, next_sequence, active_sequence;
+    u32 owner, device, dma_domain, next_sequence, active_sequence, generation;
     u64 sectors, capability;
-    u8 active, stopped;
+    u8 active, stopped, accepting;
 } StorageIpcBroker;
+
+typedef struct {
+    StorageIpcBroker *broker;
+    u32 generation, owner;
+    u64 capability;
+    u8 active;
+} StorageIpcService;
+
+typedef int (*StorageIpcDmaRevoke)(u32 domain);
 
 static inline int storage_ipc_request_validate(const StorageIpcRequest *request,
                                                 u64 granted_capability, u64 required_capability,
@@ -78,13 +87,16 @@ static inline int storage_ipc_request_validate(const StorageIpcRequest *request,
 
 static inline void storage_ipc_broker_init(StorageIpcBroker *broker, u32 owner,
                                            u32 device, u32 dma_domain, u64 sectors, u64 capability) {
-    *broker = (StorageIpcBroker){owner, device, dma_domain, 0, 0, sectors, capability, 0, 0};
+    *broker = (StorageIpcBroker){.owner = owner, .device = device, .dma_domain = dma_domain,
+                                 .generation = 1, .sectors = sectors, .capability = capability,
+                                 .accepting = 1};
 }
 
 static inline int storage_ipc_submit(StorageIpcBroker *broker, const StorageIpcRequest *request,
                                      u64 granted_capability, StorageIpcDmaCheck dma_check) {
     int status;
     if (!broker || broker->stopped) return STORAGE_IPC_E_STOPPED;
+    if (!broker->accepting) return STORAGE_IPC_E_STOPPED;
     if (broker->active) return STORAGE_IPC_E_BUSY;
     status = storage_ipc_request_validate(request, granted_capability, broker->capability, broker->owner,
                                            broker->device, broker->dma_domain, broker->sectors, dma_check);
@@ -93,15 +105,23 @@ static inline int storage_ipc_submit(StorageIpcBroker *broker, const StorageIpcR
     return STORAGE_IPC_OK;
 }
 
-static inline int storage_ipc_complete(StorageIpcBroker *broker, u32 sequence,
-                                       int io_status, u64 bytes, StorageIpcResponse *response) {
+static inline int storage_ipc_complete_generation(StorageIpcBroker *broker, u32 generation,
+                                                  u32 sequence, int io_status, u64 bytes,
+                                                  StorageIpcResponse *response) {
     if (!broker || broker->stopped) return STORAGE_IPC_E_STOPPED;
+    if (generation != broker->generation) return STORAGE_IPC_E_SEQUENCE;
     if (!broker->active || sequence != broker->active_sequence) return STORAGE_IPC_E_SEQUENCE;
     if (bytes > STORAGE_IPC_MAX_BYTES) { broker->active = 0; return STORAGE_IPC_E_BOUNDS; }
     if (response) *response = (StorageIpcResponse){STORAGE_IPC_VERSION, sizeof(*response),
                                                     io_status, sequence, bytes};
     broker->active = 0; broker->active_sequence = 0;
     return io_status;
+}
+
+static inline int storage_ipc_complete(StorageIpcBroker *broker, u32 sequence,
+                                       int io_status, u64 bytes, StorageIpcResponse *response) {
+    return storage_ipc_complete_generation(broker, broker ? broker->generation : 0, sequence,
+                                           io_status, bytes, response);
 }
 
 static inline int storage_ipc_cancel(StorageIpcBroker *broker, u32 sequence) {
@@ -112,8 +132,65 @@ static inline int storage_ipc_cancel(StorageIpcBroker *broker, u32 sequence) {
 
 static inline int storage_ipc_teardown(StorageIpcBroker *broker) {
     if (!broker || broker->stopped) return STORAGE_IPC_E_STOPPED;
-    broker->active = 0; broker->active_sequence = 0; broker->stopped = 1;
+    broker->active = 0; broker->active_sequence = 0; broker->accepting = 0; broker->stopped = 1;
     return STORAGE_IPC_OK;
+}
+
+/* Stop admission before a restart. Any single-flight request is cancelled so
+ * no completion from the retiring service can become a new service response. */
+static inline int storage_ipc_quiesce(StorageIpcBroker *broker) {
+    if (!broker || broker->stopped) return STORAGE_IPC_E_STOPPED;
+    broker->accepting = 0;
+    if (broker->active) {
+        broker->active = 0;
+        broker->active_sequence = 0;
+        return STORAGE_IPC_E_CANCELLED;
+    }
+    return STORAGE_IPC_OK;
+}
+
+static inline int storage_ipc_handoff(StorageIpcBroker *broker, u32 generation,
+                                      u32 owner, u32 device, u32 dma_domain, u64 sectors,
+                                      u64 capability, StorageIpcDmaRevoke revoke) {
+    if (!broker || broker->stopped) return STORAGE_IPC_E_STOPPED;
+    if (broker->active || broker->accepting) return STORAGE_IPC_E_BUSY;
+    if (!generation || generation <= broker->generation || !owner || !device || !dma_domain ||
+        !sectors || !capability || !revoke) return STORAGE_IPC_E_CAPABILITY;
+    if (!revoke(broker->dma_domain)) return STORAGE_IPC_E_DMA;
+    broker->owner = owner; broker->device = device; broker->dma_domain = dma_domain;
+    broker->sectors = sectors; broker->capability = capability; broker->generation = generation;
+    broker->accepting = 1;
+    return STORAGE_IPC_OK;
+}
+
+static inline int storage_ipc_service_start(StorageIpcService *service, StorageIpcBroker *broker,
+                                            u32 generation, u32 owner, u64 capability) {
+    if (!service || !broker || broker->stopped || !broker->accepting ||
+        generation != broker->generation || owner != broker->owner ||
+        !(capability & broker->capability)) return STORAGE_IPC_E_CAPABILITY;
+    *service = (StorageIpcService){broker, generation, owner, capability, 1};
+    return STORAGE_IPC_OK;
+}
+
+static inline int storage_ipc_service_dispatch(StorageIpcService *service,
+                                                const StorageIpcRequest *request,
+                                                StorageIpcDmaCheck dma_check) {
+    if (!service || !service->active) return STORAGE_IPC_E_STOPPED;
+    return storage_ipc_submit(service->broker, request, service->capability, dma_check);
+}
+
+static inline int storage_ipc_service_complete(StorageIpcService *service, u32 sequence,
+                                               int io_status, u64 bytes,
+                                               StorageIpcResponse *response) {
+    if (!service || !service->active) return STORAGE_IPC_E_STOPPED;
+    return storage_ipc_complete_generation(service->broker, service->generation, sequence,
+                                           io_status, bytes, response);
+}
+
+static inline int storage_ipc_service_exit(StorageIpcService *service) {
+    if (!service || !service->active) return STORAGE_IPC_E_STOPPED;
+    service->active = 0;
+    return storage_ipc_quiesce(service->broker);
 }
 
 #endif
