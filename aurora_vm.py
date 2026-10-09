@@ -51,7 +51,8 @@ def counters(q,folder):
     return result
 
 def run(script, folder, disk='build/development.img', timeout=7200, cpus=4,
-        port=4454, resume=False, files=None, network_ready=False, launch='bash aurora-job.sh'):
+        port=4454, resume=False, files=None, network_ready=False, launch='bash aurora-job.sh',
+        host_forward=None):
     folder = Path(folder); folder.mkdir(parents=True, exist_ok=True)
     target = folder/'development.img'
     if not resume:
@@ -64,13 +65,17 @@ def run(script, folder, disk='build/development.img', timeout=7200, cpus=4,
     put_ext2_files(target, payload)
     logpath = folder/'serial.log'
     qemu=os.environ.get('AURORA_QEMU') or shutil.which('qemu-system-x86_64') or 'tools/qemu/qemu-system-x86_64.exe'
+    network = ['-netdev', 'user,id=net0']
+    if host_forward:
+        host_port, guest_port = host_forward
+        network[1] += f',hostfwd=tcp:127.0.0.1:{host_port}-:{guest_port}'
     command = [qemu, '-machine', 'pc', '-accel', 'tcg,thread=multi',
         '-cpu', 'qemu64', '-smp', str(cpus), '-m', '1G', '-no-reboot', '-vga', 'std',
         '-drive', f'format=raw,file={folder}/aurora.img,if=ide,index=0',
         '-drive', f'format=raw,file={target},if=none,id=development',
         '-device', 'virtio-blk-pci,drive=development,disable-modern=on',
         '-object', 'rng-builtin,id=rng0', '-device', 'virtio-rng-pci,rng=rng0,disable-modern=on',
-        '-netdev', 'user,id=net0', '-device', 'virtio-net-pci,netdev=net0,disable-modern=on',
+        *network, '-device', 'virtio-net-pci,netdev=net0,disable-modern=on',
         '-serial', f'file:{logpath}', '-display', 'none',
         '-qmp', f'tcp:127.0.0.1:{port},server=on,wait=off']
     q = None

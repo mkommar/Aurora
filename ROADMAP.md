@@ -131,8 +131,10 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
      queries and hash-guarded removal, and can download over the existing Aurora
      HTTPS curl interface when given an explicit SHA-256. Host fixtures cover checksum
      rejection, collisions, rollback, traversal, state queries and removal.
-     Remaining: validate the pinned Make and diffutils download/configure/build/
-     test/package/install/smoke flows inside Aurora, upstream dpkg and
+     Host lifecycle fixtures now also reject same-version reinstalls without
+     mutation. Remaining: validate the pinned Make and diffutils
+     download/configure/build/test/package/install/smoke flows inside Aurora,
+     upstream dpkg and
      APT-compatible repository tooling, richer dependency/version metadata,
      maintainer scripts, full metadata semantics and authenticated release policy.
      The bounded installer now resolves comma-separated exact-name dependencies

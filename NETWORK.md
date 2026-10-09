@@ -33,6 +33,13 @@ There is no host port forwarding in the default launch configuration. A test
 or custom QEMU launch can forward a host port to a guest TCP listener; a guest
 client reaches that service at `10.0.2.2:<host-port>`.
 
+The native package runner uses the same bounded mechanism for a Linux-hosted
+source mirror. It binds the verified cache on loopback, adds a QEMU user-NAT
+`hostfwd` rule, and makes the mirror available to Aurora at
+`http://10.0.2.2:8080`. The server starts only after every requested archive
+matches the package source lock and refuses missing or mismatched files; it
+does not substitute host-built or placeholder inputs.
+
 ## Runtime and isolation
 
 - IPv4, Ethernet, ARP, ICMP, DHCP, UDP, and TCP are supplied by pinned lwIP.

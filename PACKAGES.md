@@ -156,8 +156,10 @@ checks successful install, ownership/list queries, safe removal, checksum
 rejection, duplicate/overwrite refusal, preflight collision behavior, install
 rollback and path traversal rejection.
 `python tests/package-lifecycle-host.py` covers dependency ordering, missing
-dependencies, cycles, upgrades, bounded version ordering, downgrade rejection,
-file replacement and dependency-aware removal.
+dependencies, cycles, upgrades, same-version reinstall rejection, bounded
+version ordering, downgrade rejection, file replacement and dependency-aware
+removal. These are host transaction fixtures; they do not establish guest
+package evidence.
 The Make package's guest download/configure/build/package/install/smoke flow
 still requires a prepared development image with the bootstrap GNU tools and
 network access. No pinned Make 4.4.1 source archive is currently cached in the
@@ -176,6 +178,28 @@ Guest logs and output packages live under `/work/packages/logs` and
 `/work/packages/out`. Use `--resume` only when deliberately reusing that test
 disk. A failed source build directory is preserved and not silently reused;
 inspect its log and choose a fresh candidate for a clean retry.
+
+For offline or restricted-host validation, `native-packages.py` can serve a
+verified source cache through a Linux-hosted mirror fixture and QEMU user-mode
+NAT:
+
+```sh
+python3 native-packages.py diffutils --mirror-cache build/native-mirror \
+  --disk build/native-build.img --folder build/native-package-tests
+```
+
+The cache must contain the exact archive filename from
+`packages/sources.lock.json`; the runner verifies its SHA-256 before starting
+the HTTP server. QEMU forwards a loopback host port to guest `10.0.2.2:8080`,
+and the guest build uses that mirror instead of upstream internet. The mirror
+does not create missing bootstrap or source inputs. `--retry` remains bounded
+to a resumed disposable disk and preserves failed build trees/logs; it does
+not reuse a failed source tree.
+
+The fixture has been host-tested with the exact diffutils 3.10 archive. A
+guest package result still requires the prepared GNU bootstrap image and all
+of its locked inputs; a working source mirror does not replace that
+prerequisite.
 
 Only the bootstrap tools are initially available. Later recipes require their
 listed prerequisites to have been installed on the candidate. Passing a list of
