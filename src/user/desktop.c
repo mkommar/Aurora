@@ -42,19 +42,19 @@ static void check_application(void){
   logline(b);serial(b);serial("\r\n");running_pid=-1;dirty=1;
  }
 }
-static void launch(const char *commandline){
+static int launch(const char *commandline,int report){
  if(commandline[0]=='.'&&commandline[1]=='/')commandline+=2;
- if(running_pid>=0){logline("An application is still running.");return;}
+ if(running_pid>=0){if(report)logline("An application is still running.");return 0;}
  SpawnRequest r={0};int n=0;while(commandline[n]&&commandline[n]!=' '&&n<31){r.name[n]=commandline[n];n++;}
- if(commandline[n]&&commandline[n]!=' '){report_error(ERR_NAME);return;}
- int length=len(commandline);if(length>127){report_error(ERR_LIMIT);return;}memcpy(r.args,commandline,length+1);
- i64 id=syscall(SYS_SPAWN,(u64)&r,0,0);if(id==ERR_NOT_FOUND)id=syscall(SYS_NATIVE_SPAWN,(u64)&r,0,0);if(id<0)report_error(id);else running_pid=(int)id;
+ if(commandline[n]&&commandline[n]!=' '){if(report)report_error(ERR_NAME);return 0;}
+ int length=len(commandline);if(length>127){if(report)report_error(ERR_LIMIT);return 0;}memcpy(r.args,commandline,length+1);
+ i64 id=syscall(SYS_SPAWN,(u64)&r,0,0);if(id==ERR_NOT_FOUND)id=syscall(SYS_NATIVE_SPAWN,(u64)&r,0,0);if(id<0){if(report)report_error(id);return 0;}running_pid=(int)id;return 1;
 }
 static i64 development_file(const char *name,void *buffer,u64 size,int write){
  FileRequest r={0};int i=0;while(name[i]&&i<31){r.name[i]=name[i];i++;}if(name[i])return ERR_NAME;
  r.buffer=(u64)buffer;r.size=size;return syscall(write?SYS_NATIVE_WRITE:SYS_NATIVE_READ,(u64)&r,0,0);
 }
-static void openapp(int id){app=id;drag=0;dirty=1;serial("APP ");char label[2]={'0'+id,0};serial(label);serial("\r\n");}
+static void openapp(int id){app=id;drag=0;dirty=1;serial("APP ");char label[2]={'0'+id,0};serial(label);serial("\r\n");if(id==1)launch("bash --noprofile --norc",0);}
 static void command(void){char b[80]=" > ";memcpy(b+3,cmd,clen+1);logline(b);serial("COMMAND ");serial(cmd);serial("\r\n");
  if(eq(cmd,"help")){logline("help about mem clear theme sync reboot poweroff");logline("ls | cat FILE | save [FILE] | load [FILE] | run APP");logline("GCC: gcc -static demo.c -o demo, then ./demo");logline("GNU environment: bash, make; FAT32: /exchange");logline("Applications: hello [name], calc A B, filedemo");}
  else if(eq(cmd,"about")){logline("Aurora 0.2 / original x86-64 microkernel");logline("Three ring-3 services, private address spaces, IPC.");}
@@ -70,8 +70,8 @@ static void command(void){char b[80]=" > ";memcpy(b+3,cmd,clen+1);logline(b);ser
  else if(cmd[0]=='l'&&cmd[1]=='o'&&cmd[2]=='a'&&cmd[3]=='d'&&cmd[4]==' '){i64 r=development_file(cmd+5,notes,sizeof(notes)-1,0);if(r<0)report_error(r);else{nlen=(int)r;notes[nlen]=0;logline("Source loaded into Notes (F3).");}}
  else if(eq(cmd,"save")){i64 r=file_request("notes.txt",notes,nlen,1);if(r<0)report_error(r);else logline("Notes saved to notes.txt.");}
  else if(eq(cmd,"load")){i64 r=file_request("notes.txt",notes,sizeof(notes)-1,0);if(r<0)report_error(r);else {nlen=(int)r;notes[nlen]=0;logline("Notes loaded from notes.txt.");}}
- else if(cmd[0]=='r'&&cmd[1]=='u'&&cmd[2]=='n'&&cmd[3]==' ')launch(cmd+4);
- else if(clen)launch(cmd);
+  else if(cmd[0]=='r'&&cmd[1]=='u'&&cmd[2]=='n'&&cmd[3]==' ')launch(cmd+4,1);
+  else if(clen)launch(cmd,1);
  clen=0;cmd[0]=0;
 }
 static const char normal[128]={

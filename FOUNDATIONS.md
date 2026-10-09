@@ -7,10 +7,12 @@ the native GCC toolchain. This is a working bootstrap, not full POSIX support.
 
 ## Use
 
-Run `run.ps1 -NoBuild` or `Launch Aurora.cmd`, open F2 Terminal, and enter:
+Run `run.ps1 -NoBuild` or `Launch Aurora.cmd`, then open F2 Terminal. When the
+development image is attached, F2 starts GNU Bash automatically with startup
+files disabled; the existing desktop command console remains available when
+the image or Bash is unavailable. In Bash, enter:
 
 ```text
-bash --noprofile --norc
 cd /work
 make
 ./made-demo

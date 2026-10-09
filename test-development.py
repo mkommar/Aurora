@@ -73,6 +73,8 @@ try:
         for tool,version in [('sed','GNU sed'),('grep','GNU grep'),('gawk','GNU Awk'),('find','GNU findutils'),('tar','GNU tar'),('gzip','gzip'),('ar','GNU ar'),('ranlib','GNU ranlib')]:
             out=command(tool+' --version');check(tool+' is available',version in out and 'Application exited: 0' in out)
     offset=len(log());type_line('bash --noprofile --norc');wait(lambda:'NATIVE EXEC: /usr/bin/bash' in log()[offset:]);time.sleep(1)
+    wait(lambda:'NATIVE EXEC: /usr/bin/bash' in log()[offset:]);time.sleep(1)
+    check('F2 terminal starts the default GNU Bash shell',True)
     type_line('echo shell-ready');wait(lambda:'\nshell-ready' in log()[offset:])
     type_line("printf 'hello world' > /work/shell-output")
     type_line("read -r value < /work/shell-output; echo value=$value")
