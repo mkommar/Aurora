@@ -30,23 +30,24 @@ def leaf(root,va):
 # Wait for all probes and services, with a bounded startup deadline.
 for _ in range(100):
     log=(build/'serial.log').read_text()
-    if 'spinning without yielding' in log and log.count('FAULT isolated task=')==6 and 'desktop ready' in log:break
+    if 'spinning without yielding' in log and log.count('FAULT isolated task=')==7 and 'STORAGE: ring3 service restarted generation=' in log and 'desktop ready' in log:break
     time.sleep(.1)
-check('All deliberate faults were contained',log.count('FAULT isolated task=')==6)
+check('All deliberate faults were contained',log.count('FAULT isolated task=')==7)
+check('Storage service crash was contained and restarted','STORAGE: ring3 service restarted generation=' in log)
 check('Invalid syscall buffers and capabilities rejected','syscall validation PASS' in log and 'FAILED' not in log)
 check('Desktop started despite faulty peers','desktop ready' in log and 'KERNEL PANIC' not in log)
 
 q.call('stop')
 try:
     roots=words(symbols['task_cr3'],10)
-    check('Every process has a distinct page-table root',len(set(roots))==10)
+    check('Every process has a distinct page-table root',len(set(roots))==11)
     faults=words(symbols['task_faults'],10)
-    check('Kernel-memory and foreign-memory access produce page faults',faults[3]==15 and faults[4]==15)
-    check('Direct port I/O produces a general-protection fault',faults[5]==14)
-    check('Executing stack data produces a page fault',faults[7]==15)
-    check('Writing executable code produces a page fault',faults[8]==15)
-    check('Invalid opcode terminates only its process',faults[9]==7)
-    check('Production services remain fault-free',faults[:3]==(0,0,0))
+    check('Kernel-memory and foreign-memory access produce page faults',faults[10]==15 and faults[11]==15)
+    check('Direct port I/O produces a general-protection fault',faults[12]==14)
+    check('Executing stack data produces a page fault',faults[14]==15)
+    check('Writing executable code produces a page fault',faults[15]==15)
+    check('Invalid opcode terminates only its process',faults[16]==7)
+    check('Production services remain fault-free',faults[:4]==(0,0,0,0))
     for i,root in enumerate(roots[:3]):
         code=leaf(root,0x400000);data=leaf(root,0x5f0000)
         check(f'Process {i}: code is user RX; stack is user RW/NX',code&7==5 and not(code>>63) and data&7==7 and data>>63==1)
@@ -60,7 +61,7 @@ try:
     check('Services have made IPC deliveries',counter('ipc_messages')>=3)
     before=counter('timer_ticks')
     runs=words(symbols['task_preemptions'],10)
-    check('A non-yielding process was forcibly preempted',runs[6]>0)
+    check('A non-yielding process was forcibly preempted',runs[13]>0)
 finally:q.call('cont')
 time.sleep(.2)
 check('Timer and scheduler continue after faults',counter('timer_ticks')>before)

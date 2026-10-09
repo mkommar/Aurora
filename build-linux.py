@@ -79,6 +79,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--llvm-bin', default=os.environ.get('AURORA_LLVM'))
     parser.add_argument('--output', default='build')
+    parser.add_argument('--self-test', action='store_true')
     args = parser.parse_args()
     out = ROOT / args.output
     out.mkdir(parents=True, exist_ok=True)
@@ -100,14 +101,17 @@ def main():
         run([nasm, '-f', fmt, ROOT / source, '-o', out / target])
     compile_source(clang, flags, ROOT / 'src/user/lib.c', out / 'user-lib.o')
 
-    services = ['desktop', 'input', 'display']
+    services = ['desktop', 'input', 'display', 'storage']
+    if args.self_test:
+        services.append('probe')
+    service_flags = ['-DAURORA_SELF_TEST=1'] if args.self_test else []
     header = ['/* Generated from the separately linked user binaries. */']
     bundle = ['bits 64', 'section .rodata.images',
               'global ap_start_image,ap_start_end', 'ap_start_image:',
               f'incbin "{out / "ap-start.bin"}"', 'ap_start_end:']
     run([nasm, '-f', 'bin', ROOT / 'src/ap_start.asm', '-o', out / 'ap-start.bin'])
     for service in services:
-        compile_source(clang, flags + ['-Os'], ROOT / f'src/user/{service}.c', out / f'{service}.o')
+        compile_source(clang, flags + service_flags + ['-Os'], ROOT / f'src/user/{service}.c', out / f'{service}.o')
         run([lld, '-nostdlib', '-T', ROOT / 'src/user/linker.ld', out / 'user-start.o',
              out / f'{service}.o', out / 'user-lib.o', '-o', out / f'{service}.elf'])
         run([objcopy, '-O', 'binary', out / f'{service}.elf', out / f'{service}.bin'])
@@ -123,7 +127,8 @@ def main():
             run(['python3', ROOT / 'tools/module-format.py', 'create',
                  '--input', out / 'probe.bin', '--output', modules / 'probe.mod',
                  '--entry', '0', '--text-end', str(int(values['__text_end'], 16) - 0x400000),
-                 '--ro-end', str(int(values['__ro_end'], 16) - 0x400000)])
+                 '--ro-end', str(min(int(values['__ro_end'], 16) - 0x400000,
+                                      (out / 'probe.bin').stat().st_size))])
     (out / 'images.h').write_text('\n'.join(header) + '\n')
     (out / 'images.asm').write_text('\n'.join(bundle) + '\n')
     run([nasm, '-f', 'elf64', out / 'images.asm', '-o', out / 'images.o'])
@@ -160,12 +165,12 @@ def main():
         net_objects.append(target)
 
     kernel_flags = flags + fat_flags + ['-I', str(out), '-Os']
-    compile_source(clang, kernel_flags, ROOT / 'src/kernel.c', out / 'kernel.o')
+    compile_source(clang, kernel_flags + service_flags, ROOT / 'src/kernel.c', out / 'kernel.o')
     run([lld, '-nostdlib', '--gc-sections', '-T', ROOT / 'src/linker.ld', out / 'entry.o', out / 'traps.o', out / 'kernel.o', out / 'images.o', *fs_objects, *net_objects, '-o', out / 'kernel.elf'])
     run([objcopy, '-O', 'binary', out / 'kernel.elf', out / 'kernel.bin'])
     kernel = (out / 'kernel.bin').read_bytes()
-    if len(kernel) > 245760:
-        raise SystemExit('Kernel + service bundle exceeds loader limit of 480 sectors')
+    if len(kernel) > 307200:
+        raise SystemExit('Kernel + service bundle exceeds loader limit of 600 sectors')
     image = out / 'aurora.img'
     data = bytearray(image.read_bytes()) if image.exists() else bytearray(16 * 1024 * 1024)
     if len(data) != 16 * 1024 * 1024:

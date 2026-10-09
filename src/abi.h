@@ -7,13 +7,15 @@ typedef unsigned long long u64;
 typedef long long i64;
 
 enum { DESKTOP, INPUT, DISPLAY };
+#define STORAGE_TASK 3
 /* Task slots shared by the kernel and the desktop's per-application console
    state. Legacy SDK applications use slots below LEGACY_TASKS. */
 enum { TASK_LIMIT=32, LEGACY_TASKS=16 };
 enum { SYS_YIELD, SYS_SEND, SYS_RECV, SYS_POLL, SYS_IN, SYS_OUT,
        SYS_LOG, SYS_TICKS, SYS_EXIT, SYS_FILE_READ, SYS_FILE_WRITE,
        SYS_FILE_LIST, SYS_SPAWN, SYS_STATUS, SYS_NATIVE_SPAWN,
-       SYS_NATIVE_READ, SYS_NATIVE_WRITE, SYS_NATIVE_LIST, SYS_NATIVE_INPUT, SYS_SYNC };
+       SYS_NATIVE_READ, SYS_NATIVE_WRITE, SYS_NATIVE_LIST, SYS_NATIVE_INPUT, SYS_SYNC,
+       SYS_STORAGE };
 enum { MSG_KEY=1, MSG_MOUSE, MSG_CLOCK, MSG_PRESENT, MSG_PRESENTED, MSG_POWER };
 enum { MSG_CONSOLE=7 };
 enum { ERR_NOT_FOUND=-7, ERR_IO=-8, ERR_FORMAT=-9, ERR_LIMIT=-10, ERR_NAME=-11 };

@@ -108,12 +108,15 @@ The SDK path compiles on Windows. The optional native GCC environment compiles
 inside Aurora using a separate compatibility ABI and development volume.
 AuroraFS limits are 32 files, 64 KiB per file, and a flat directory; the
 ext2/FAT32 development volumes have separate limits. Builds
-preserve existing files while refreshing the bundled examples. Storage remains
-in the kernel: ATA uses IRQ14 after scheduling starts, and
-VirtIO block I/O uses batched requests and interrupt completion. The storage
-IPC header now has a host/fixture-tested generation and restart handoff
-boundary, but it is not guest ring-3 module execution or hardware DMA
-isolation. Moving the device path to a real service remains future work.
+preserve existing files while refreshing the bundled examples. The storage
+control loop is built and wired as a candidate ring-3 service task reaching
+the kernel-owned VirtIO path through a capability-gated syscall. ATA uses IRQ14
+after scheduling starts, and VirtIO block I/O uses batched requests and
+interrupt completion. Fault/restart containment hooks use a newer IPC
+generation, but QEMU currently stops at the first invalid user return frame
+before guest service startup is validated. This remains software DMA range
+enforcement, not hardware IOMMU isolation or a complete storage microkernel
+extraction.
 
 ## What changed from 0.1
 
@@ -153,7 +156,7 @@ installation found on this computer. To choose another directory:
 The build separately compiles and links each user service, derives page
 permissions from its linker symbols, and embeds its flat image into the boot
 bundle. The kernel copies the services into distinct private memory at startup.
-The disk image is 16 MiB, and the loader accepts a bundle up to 240 KiB.
+The disk image is 16 MiB, and the loader accepts a bundle up to 300 KiB.
 ELF files retain symbols for debugging. Generated files and tools are Git-ignored.
 
 ### Linux host

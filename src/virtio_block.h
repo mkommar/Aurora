@@ -11,6 +11,7 @@ static u32 virtio_device;
 static int virtio_ready,virtio_present;
 static int virtio_message_mode;
 static StorageIpcBroker virtio_storage_broker;
+static StorageIpcService virtio_storage_service;
 static u32 virtio_storage_sequence;
 static u32 virtio_irq_line,virtio_slots;
 static int virtio_storage_dma_check(u64 address,u64 length,u32 permissions){
@@ -54,7 +55,7 @@ static void virtio_block_init(void){
             if(io_read16(virtio_port+22)==0xffff){pci_write16(address,pci_msix_cap+2,(pci_read(address,pci_msix_cap)>>16)&~0x8000);pci_write16(address,4,(pci_read(address,4)&0xffff)&~0x400);virtio_message_mode=0;}}
         u32 config=virtio_message_mode==2?24:20;
         virtio_sectors=io_read32(virtio_port+config)|((u64)io_read32(virtio_port+config+4)<<32);
-        outb(virtio_port+18,7);storage_ipc_broker_init(&virtio_storage_broker,SERVICE_STORAGE,virtio_device,DMA_DOMAIN_STORAGE,virtio_sectors,SERVICE_CAP_STORAGE);virtio_ready=1;
+         outb(virtio_port+18,7);storage_ipc_broker_init(&virtio_storage_broker,STORAGE_TASK,virtio_device,DMA_DOMAIN_STORAGE,virtio_sectors,SERVICE_CAP_STORAGE);storage_ipc_service_start(&virtio_storage_service,&virtio_storage_broker,1,STORAGE_TASK,SERVICE_CAP_STORAGE);virtio_ready=1;
         serial("VIRTIO: PCI block queue ready sectors=");hex(virtio_sectors);serial(" slots=");hex(virtio_slots);serial(virtio_message_mode==2?" MSI-X\r\n":virtio_message_mode?" MSI\r\n":" INTx\r\n");return;
     }
 }
@@ -67,7 +68,7 @@ static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
        !dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_BOUNCE,0x80000,DMA_READ|DMA_WRITE)) return 0;
     if(operation==4&&!(virtio_features&(1U<<9)))return 0;
     if(++virtio_storage_sequence==0)++virtio_storage_sequence;
-    StorageIpcRequest ipc={STORAGE_IPC_VERSION,sizeof(StorageIpcRequest),operation==4?STORAGE_IPC_FLUSH:(operation==0?STORAGE_IPC_READ:STORAGE_IPC_WRITE),0,virtio_storage_sequence,SERVICE_STORAGE,virtio_device,DMA_DOMAIN_STORAGE,sector,count,count?(u64)VIRTIO_BOUNCE:0};
+    StorageIpcRequest ipc={STORAGE_IPC_VERSION,sizeof(StorageIpcRequest),operation==4?STORAGE_IPC_FLUSH:(operation==0?STORAGE_IPC_READ:STORAGE_IPC_WRITE),0,virtio_storage_sequence,STORAGE_TASK,virtio_device,DMA_DOMAIN_STORAGE,sector,count,count?(u64)VIRTIO_BOUNCE:0};
     if(storage_ipc_submit(&virtio_storage_broker,&ipc,SERVICE_CAP_STORAGE,
                           virtio_storage_dma_check)) return 0;
     VirtioDescriptor *desc=(VirtioDescriptor *)VIRTIO_RING;
