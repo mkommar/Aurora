@@ -216,7 +216,16 @@ Python 3 and Pillow are used by the QMP integration tests. QMP listens only on
 python test-smoke.py --nm 'C:\path\to\llvm\bin\llvm-nm.exe'
 ```
 
-For the fault-injection image, close the normal VM and run:
+For the deliberately gated malicious-DMA image, close the normal VM and run
+`python build-linux.py --self-test --dma-fault-test`, then run
+`python test-iommu-dma-fault.py --build-dir build/selftest`. This is a QEMU
+VirtIO negative test, not a claim about arbitrary PCI devices or physical
+hardware. On QEMU 8.2 the legacy/transitional VirtIO PCI model cannot enable
+`iommu_platform`, so the harness currently reports descriptor publication and
+the bounded fault wait without claiming a passing hardware negative. Intentional
+DMA faults are present only in this self-test image.
+
+For the existing process fault-injection image, close the normal VM and run:
 
 ```powershell
 .\run.ps1 -SelfTest -Headless

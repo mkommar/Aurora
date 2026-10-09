@@ -28,6 +28,9 @@ int main(void) {
     assert(vtd_context_attributes(0x12345000) == (0x12345000ULL | 2));
     assert(vtd_leaf_entry(0x2000, VTD_READ | VTD_WRITE) == 0x2003);
     assert(vtd_fault_reason(0x80000031) == 0x31);
+    assert(vtd_fault_record_index(0x00000500) == 5);
+    assert(vtd_fault_record_source(0x12340000) == 0x1234);
+    assert(vtd_fault_record_address(0x12345abc) == 0x12345000);
     dmar[50] = 15;
     assert(!vtd_parse_dmar(dmar, sizeof(dmar), &unit));
     puts("PASS VT-d DMAR parsing, context/table construction and fault decoding");

@@ -79,5 +79,7 @@ static AMDV_UNUSED u64 amdv_pte(u64 physical, u32 permissions) {
 }
 
 static AMDV_UNUSED u32 amdv_fault_type(u64 event) { return (u32)((event >> 28) & 0xf); }
+static AMDV_UNUSED u32 amdv_fault_source(u64 event) { return (u32)(event & 0xffff); }
+static AMDV_UNUSED u64 amdv_fault_address(u64 event_address) { return event_address & ~0xfffULL; }
 
 #endif

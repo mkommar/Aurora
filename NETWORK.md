@@ -51,8 +51,12 @@ client reaches that service at `10.0.2.2:<host-port>`.
 - The VirtIO network and entropy devices have explicit capability-scoped DMA
   domains. Their fixed descriptor rings and data buffers must be registered in
   those domains before use; software range checks reject foreign, unaligned,
-  overflowing, unmapped, or revoked ranges. This does not provide hardware DMA
-  protection until an operational VT-d/AMD-Vi backend exists.
+  overflowing, unmapped, or revoked ranges. The operational VT-d/AMD-Vi
+  backend provides hardware translation for the configured QEMU VirtIO
+  domains. The dedicated
+  DMA-fault QEMU test only targets the transitional VirtIO block device; it does
+  not establish protection for arbitrary physical network hardware, interrupt
+  remapping, or concurrent multi-device attacks.
 - lwIP's raw `NO_SYS` API runs under the existing native-state lock. It never
   keeps syscall user pointers. NIC IRQs acknowledge completion; scheduler
   boundaries perform protocol work and wake socket waiters. This is an

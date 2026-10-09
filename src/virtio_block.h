@@ -59,6 +59,55 @@ static void virtio_block_init(void){
         serial("VIRTIO: PCI block queue ready sectors=");hex(virtio_sectors);serial(" slots=");hex(virtio_slots);serial(virtio_message_mode==2?" MSI-X\r\n":virtio_message_mode?" MSI\r\n":" INTx\r\n");return;
     }
 }
+#if defined(AURORA_SELF_TEST) && defined(AURORA_DMA_FAULT_TEST)
+/* Submit one genuine VirtIO request whose data address is outside the storage
+ * second-level domain. This function is absent from production builds. */
+static volatile int virtio_dma_test_pending;
+static volatile u32 virtio_dma_test_polls;
+static volatile u16 *virtio_dma_test_used;
+static volatile u16 virtio_dma_test_used_before;
+static int virtio_malicious_dma_test(void) {
+    VirtioDescriptor *desc; volatile u16 *avail;
+    u64 request = VIRTIO_REQUESTS + 0x20;
+    /* This is ordinary guest RAM, but belongs to no VirtIO DMA domain. */
+    const u64 unauthorized = 0x06000000ULL;
+    if (!virtio_ready || !virtio_queue_size || dma_faulted()) return 0;
+    desc = (VirtioDescriptor *)VIRTIO_RING;
+    avail = (volatile u16 *)(VIRTIO_RING + 16 * virtio_queue_size);
+    virtio_dma_test_used = (volatile u16 *)((VIRTIO_RING + 16 * virtio_queue_size + 6 + 2 * virtio_queue_size + 4095) & ~4095ULL);
+    virtio_dma_test_used_before = virtio_dma_test_used[1];
+    *(u32 *)request = 0; *(u32 *)(request + 4) = 0; *(u64 *)(request + 8) = 0;
+    *(volatile u8 *)(request + 16) = 255;
+    desc[0] = (VirtioDescriptor){request, 16, 1, 1};
+    desc[1] = (VirtioDescriptor){unauthorized, 512, 3, 2};
+    desc[2] = (VirtioDescriptor){request + 16, 1, 2, 0};
+    avail[2 + virtio_avail % virtio_queue_size] = 0;
+    __asm__ volatile("mfence" ::: "memory"); ++virtio_avail; avail[1] = virtio_avail;
+    serial("IOMMU TEST: published descriptor=00000000 avail="); hex(virtio_avail);
+    serial(" notify=00000000\r\n");
+    __asm__ volatile("mfence" ::: "memory"); outw(virtio_port + 16, 0);
+    (void)unauthorized;
+    virtio_dma_test_pending = 1;
+    return 1;
+}
+static void virtio_malicious_dma_test_poll(void) {
+    if (!virtio_dma_test_pending) return;
+    if ((u16)(virtio_dma_test_used[1] - virtio_dma_test_used_before)) {
+        serial("IOMMU TEST: device completed unauthorized chain\r\n");
+        for (;;) __asm__ volatile("cli; hlt");
+    }
+    dma_fault_poll();
+    if (dma_faulted()) {
+        virtio_dma_test_pending = 0; virtio_ready = 0; outb(virtio_port + 18, 0);
+        serial("IOMMU TEST: unauthorized VirtIO DMA blocked; fault latched; device quarantined source=");
+        hex(dma_fault_source_id()); serial(" address="); hex(dma_fault_address_value()); serial("\r\n");
+    } else if (++virtio_dma_test_polls == 1000000) {
+        serial("IOMMU TEST: no hardware fault was latched\r\n");
+        for (;;) __asm__ volatile("cli; hlt");
+    }
+}
+#endif
+
 #include "virtio_completion.h"
 static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
     if(!virtio_ready||count>virtio_slots*VIRTIO_SLOT_SECTORS||sector>virtio_sectors||count>virtio_sectors-sector)return 0;
