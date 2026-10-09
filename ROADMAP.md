@@ -105,15 +105,19 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    path-cache eviction passed a 20,000-path/open-descriptor regression. Validate
    those foundations against the full GCC tree. Keep the bootstrap compiler
    until the replacement passes those gates.
- 9. **Reproducible package tooling.** Source hashes, dependencies, patches,
-    licenses and recipes are recorded. Native recipes produce deterministic
-    `.deb` archives with `DESTDIR`. An initial Make-only installer checks the
-    package sidecar and installed-file hashes, refuses overwrites, records file
-    ownership and rolls back moved files on failure; host fixtures cover checksum
-    rejection, collisions, rollback and traversal. Remaining: validate the
-    pinned Make download/configure/build/test/package/install/smoke flow inside
-    Aurora, upstream dpkg and APT-compatible repository tooling, and general
-    dependency/removal semantics. A deterministic APT/source distribution
+9. **Reproducible package tooling.** Source hashes, dependencies, patches,
+     licenses and recipes are recorded. Native recipes produce deterministic
+     `.deb` archives with `DESTDIR`. Aurora now has a filesystem installer that
+     validates archive members, package identity/version/architecture, safe paths,
+     file hashes and ownership state before an all-or-nothing install; it refuses
+     unsafe overwrites and deterministic reinstalls, supports ownership/list
+     queries and hash-guarded removal, and can download over the existing Aurora
+     HTTPS curl interface when given an explicit SHA-256. Host fixtures cover checksum
+     rejection, collisions, rollback, traversal, state queries and removal.
+     Remaining: validate the pinned Make download/configure/build/test/package/
+     install/smoke flow inside Aurora, upstream dpkg and APT-compatible repository
+     tooling, dependency resolution, upgrades, maintainer scripts, full metadata
+     semantics and authenticated release policy. A deterministic APT/source distribution
      tree, release manifest, synthetic-fixture test and configurable Pages
      workflow are implemented; they publish supplied `.deb` files but do not
      mirror source archives. The guest Make run is blocked by the uncached
