@@ -33,16 +33,25 @@ foreach ($service in $services) {
     Invoke-Checked "$LlvmBin/llvm-objcopy.exe" @('-O','binary',"$output/$service.elf", "$output/$service.bin")
     $symbols = & "$LlvmBin/llvm-nm.exe" -n "$output/$service.elf"
     if ($LASTEXITCODE -ne 0) { throw 'Failed to read user image symbols' }
+    $moduleTextEnd = $null
+    $moduleRoEnd = $null
     foreach ($boundary in @('text_end','ro_end')) {
         $match = $symbols | Where-Object { $_ -match " __$boundary`$" }
         if (!$match) { throw "Missing boundary: $boundary" }
         $address = ($match -split '\s+')[0]
         $header += "#define $($service.ToUpper())_$($boundary.ToUpper()) 0x${address}ULL"
+        if ($boundary -eq 'text_end') { $moduleTextEnd = [string]([Convert]::ToInt32($address,16) - 0x400000) }
+        if ($boundary -eq 'ro_end') { $moduleRoEnd = [string]([Convert]::ToInt32($address,16) - 0x400000) }
     }
     $length = (Get-Item "$output/$service.bin").Length
     $header += "extern const u8 ${service}_image[];"
     $header += "#define ${service}_image_size ${length}ULL"
     $bundle += @('align 16',"global ${service}_image", "${service}_image:", "incbin `"$output/$service.bin`"")
+    if ($service -eq 'probe') {
+        $moduleDirectory = "$output/modules"
+        New-Item -ItemType Directory -Force $moduleDirectory | Out-Null
+        Invoke-Checked 'python.exe' @('tools/module-format.py','create','--input',"$output/probe.bin",'--output',"$moduleDirectory/probe.mod",'--entry','0','--text-end',$moduleTextEnd,'--ro-end',$moduleRoEnd)
+    }
 }
 [IO.File]::WriteAllLines("$PSScriptRoot/$output/images.h",$header)
 [IO.File]::WriteAllLines("$PSScriptRoot/$output/images.asm",$bundle)

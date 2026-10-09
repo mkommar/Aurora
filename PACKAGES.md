@@ -4,6 +4,11 @@ This work is in progress. A source lock and native build runner are implemented;
 they do not mean that all listed packages have been ported. The installed C
 compiler remains the bootstrap GCC. Upstream dpkg and APT are not yet installed.
 
+The [LFS systemd book](https://www.linuxfromscratch.org/lfs/view/systemd/)
+is the reference for dependency order and host-tool vocabulary. Aurora retains
+musl, its custom kernel and its own syscall/device boundaries; LFS does not
+make Linux kernel interfaces or glibc packages available here.
+
 ## Build inputs and execution
 
 `packages/sources.lock.json` pins 23 source archives, versions, HTTPS locations,
@@ -34,6 +39,14 @@ upstream test/install sequence needs policy, and keep configure, `make`,
 `make check`, `DESTDIR` staging, package metadata and a `--version` smoke check
 inside Aurora. Never add a source checksum unless it is established from an
 authoritative source or an existing repository cache.
+
+The planned package track follows the LFS ordering in bounded Aurora steps:
+binutils and GCC foundations; Aurora-compatible API headers; m4; Perl;
+Autoconf; Automake; Libtool; Bison/Flex; Texinfo; compression and file tools;
+then IPRoute2 after the `NETLINK_ROUTE`/rtnetlink subset is implemented and
+tested. Each recipe must record exact build dependencies, pass clean native
+configure/build/test, stage with `DESTDIR`, and produce a deterministic Debian
+archive before being used as another package's prerequisite.
 
 The GNU Make recipe now has an installer path after package creation, and
 diffutils is the first explicit native prerequisite recipe using its existing
