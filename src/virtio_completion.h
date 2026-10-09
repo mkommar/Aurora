@@ -15,6 +15,7 @@ static void virtio_timeout(void){
     if(virtio_waiter>=0&&timer_ticks>=virtio_deadline){
         if(virtio_batch_done()){virtio_late_completions++;virtio_wake();return;}
         outb(virtio_port+18,0);virtio_ready=0;virtio_timeouts++;
+        storage_ipc_cancel(&virtio_storage_broker,virtio_storage_sequence);
         serial("VIRTIO: incomplete block request timed out; volume disabled\r\n");
         virtio_wake();
     }
