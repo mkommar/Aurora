@@ -29,10 +29,17 @@ permissions, service restart/timeout handling, and an IPC endpoint grant.
 
 ## Hardware boundaries
 
-This format does not provide IOMMU or DMA isolation. VirtIO and storage buffers
-remain supervisor-owned until hardware page-table enforcement and device-domain
-programming are implemented and tested. Storage therefore remains in the
-kernel, and no module milestone should be read as a storage-service claim.
+This format does not provide IOMMU or DMA isolation. The kernel now has a
+capability-scoped software DMA manager: each VirtIO block, network, and entropy
+device is assigned to one supervisor-owned domain, and every fixed ring/request
+buffer used by the drivers is explicitly mapped. Descriptor construction is
+rejected for unmapped, misaligned, overflowing, or foreign ranges; unmap,
+revocation, duplicate ownership, and teardown are covered by a host regression.
+This is software range enforcement only: it cannot stop a malicious device from
+issuing a physical transaction. The hardware backend is intentionally
+non-operational and fails closed. VT-d/AMD-Vi page-table programming, fault
+handling, and a negative hardware DMA test remain prerequisites for claiming
+hardware isolation. Storage is still in the kernel and is not a service claim.
 
 ## Build and test
 

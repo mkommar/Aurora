@@ -48,6 +48,11 @@ client reaches that service at `10.0.2.2:<host-port>`.
   IDs, packet lengths, and user pointers are checked. Processing is limited
   to 64 received packets per scheduler pass. There are 32 socket handles;
   each UDP socket retains at most eight datagrams and 64 KiB of payload.
+- The VirtIO network and entropy devices have explicit capability-scoped DMA
+  domains. Their fixed descriptor rings and data buffers must be registered in
+  those domains before use; software range checks reject foreign, unaligned,
+  overflowing, unmapped, or revoked ranges. This does not provide hardware DMA
+  protection until an operational VT-d/AMD-Vi backend exists.
 - lwIP's raw `NO_SYS` API runs under the existing native-state lock. It never
   keeps syscall user pointers. NIC IRQs acknowledge completion; scheduler
   boundaries perform protocol work and wake socket waiters. This is an
