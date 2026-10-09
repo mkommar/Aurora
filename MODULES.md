@@ -38,5 +38,6 @@ kernel, and no module milestone should be read as a storage-service claim.
 
 ```sh
 python3 tests/module-format-host.py
+python3 tests/module-activation-host.py
 python3 tools/module-format.py validate build/selftest/modules/probe.mod
 ```
