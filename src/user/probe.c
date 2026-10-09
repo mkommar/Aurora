@@ -1,7 +1,11 @@
 /* Included only in the self-test image. These processes deliberately misbehave. */
 #include "lib.h"
 void user_main(void){
-    switch(BOOT->id){
+    int probe_id=BOOT->id;
+#ifdef AURORA_SELF_TEST
+    probe_id--;
+#endif
+    switch(probe_id){
     case 3: *(volatile u64 *)0x10000=0;break; /* Kernel memory: supervisor-only. */
     case 4: *(volatile u64 *)0x2000000=0;break; /* Another task's physical alias. */
     case 5: __asm__ volatile("outb %%al,$0x64"::"a"((u8)0));break;
