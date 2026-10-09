@@ -62,6 +62,12 @@ exec 3>&1
             make -j1; make check
             make DESTDIR="$stage" install
             ;;
+        diffutils)
+            LDFLAGS='-static' bash configure --prefix="$prefix" --disable-nls
+            make -j1
+            make check
+            make DESTDIR="$stage" install
+            ;;
         *)
             options=(--prefix="$prefix" --build=x86_64-linux-musl --host=x86_64-linux-musl)
             case "$name" in

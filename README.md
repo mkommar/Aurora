@@ -22,8 +22,9 @@ GNU Bash, Make and the source-bootstrap workflow are described in
 steps 1â€“7. GNU Make can now rebuild and install itself inside Aurora.
 The clean-source GNU build and Debian-format package work is tracked in
 [Native packages](PACKAGES.md); the bounded filesystem installer supports
-verified local or HTTPS/curl-backed download installs, ownership queries and safe
-hash-guarded removal, while full package lifecycle management remains in progress.
+verified local or HTTPS/curl-backed download installs, exact-name dependency
+ordering, transactional upgrades, ownership queries and safe hash-guarded
+removal. It intentionally remains a bounded filesystem lifecycle, not dpkg/APT.
 The deterministic package and source distribution generator is documented in
 [the package distribution guide](PACKAGES.md); it can publish a static tree
 to the dedicated `mkommar/Aurora-packages` GitHub Pages repository, but it does

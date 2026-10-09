@@ -1,6 +1,6 @@
 # Aurora: implementation status and next steps
 
-Updated 2026-09-22. The original 20 items retain their numbering. Items 1-6
+Updated 2026-10-09. The original 20 items retain their numbering. Items 1-6
 have working implementations with the limits below; items 7-20 are partial or
 planned work. Retain Aurora's original kernel, ext2 for
 development, FAT32 for exchange, and the preference for reusable GNU code.
@@ -114,10 +114,16 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
      queries and hash-guarded removal, and can download over the existing Aurora
      HTTPS curl interface when given an explicit SHA-256. Host fixtures cover checksum
      rejection, collisions, rollback, traversal, state queries and removal.
-     Remaining: validate the pinned Make download/configure/build/test/package/
-     install/smoke flow inside Aurora, upstream dpkg and APT-compatible repository
-     tooling, dependency resolution, upgrades, maintainer scripts, full metadata
-     semantics and authenticated release policy. A deterministic APT/source distribution
+     Remaining: validate the pinned Make and diffutils download/configure/build/
+     test/package/install/smoke flows inside Aurora, upstream dpkg and
+     APT-compatible repository tooling, richer dependency/version metadata,
+     maintainer scripts, full metadata semantics and authenticated release policy.
+     The bounded installer now resolves comma-separated exact-name dependencies
+     from local archives or generated repository metadata, detects cycles and
+     missing packages before mutation, upgrades with rollback and rejects
+     downgrades by default; alternatives, operators, conflicts, virtual packages,
+     maintainer scripts and full Debian version semantics remain unsupported. A
+     deterministic APT/source distribution
      tree, release manifest, synthetic-fixture test and configurable Pages
      workflow are implemented; they publish supplied `.deb` files but do not
      mirror source archives. The guest Make run is blocked by the uncached
