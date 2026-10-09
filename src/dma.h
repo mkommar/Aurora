@@ -15,8 +15,8 @@
 #define DMA_DEVICE_NONE 0xffffffffU
 #define DMA_UNUSED __attribute__((unused))
 #define DMA_VTD_PAGES 64
-#define DMA_VTD_MEMORY 0x01000000ULL
-#define DMA_VTD_ROOT 0x01200000ULL
+#define DMA_VTD_MEMORY 0x00800000ULL
+#define DMA_VTD_ROOT 0x00c00000ULL
 #define DMA_BACKEND_AMD 3
 #define DMA_AMD_DEVICE_TABLE 0x01400000ULL
 #define DMA_AMD_COMMANDS 0x01600000ULL
@@ -272,8 +272,8 @@ static int dma_assign_device(u32 device, u32 domain_id) {
             if (!root[bus * 2]) { u64 context_page; if (!dma_vtd_alloc(&context_page)) return 0; root[bus * 2] = context_page | 1; }
             u64 *context = (u64 *)(u64)(root[bus * 2] & ~0xfffULL);
             context += devfn * 2;
-            context[0] = vtd_context_entry((u16)domain_id);
-            context[1] = vtd_context_attributes(domain->second_level);
+            context[0] = vtd_context_entry(domain->second_level);
+            context[1] = vtd_context_attributes((u16)domain_id);
             if (!dma_hw_flush()) { dma_device_key[i] = DMA_DEVICE_NONE; dma_device_domain[i] = DMA_DEVICE_NONE; return 0; }
         } else if (dma_backend == DMA_BACKEND_AMD) {
             u16 device_id = (u16)(((device >> 16) << 8) | (((device >> 11) & 0x1f) << 3));
@@ -302,11 +302,11 @@ static int dma_map(u32 domain_id, u64 address, u64 length, u32 permissions) {
             for (u64 page = address; page < end; page += DMA_PAGE) {
                 u32 l1 = (u32)((page >> 39) & 511), l2 = (u32)((page >> 30) & 511), l3 = (u32)((page >> 21) & 511), l4 = (u32)((page >> 12) & 511);
                 u64 *pml4 = (u64 *)(u64)domain->second_level, *pdpt, *pd, *pt;
-                if (!pml4[l1] && !dma_vtd_alloc(&pml4[l1])) return 0;
+                if (!pml4[l1]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pml4[l1] = table | 3; }
                 pdpt = (u64 *)(u64)(pml4[l1] & ~0xfffULL);
-                if (!pdpt[l2] && !dma_vtd_alloc(&pdpt[l2])) return 0;
+                if (!pdpt[l2]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pdpt[l2] = table | 3; }
                 pd = (u64 *)(u64)(pdpt[l2] & ~0xfffULL);
-                if (!pd[l3] && !dma_vtd_alloc(&pd[l3])) return 0;
+                if (!pd[l3]) { u64 table; if (!dma_vtd_alloc(&table)) return 0; pd[l3] = table | 3; }
                 pt = (u64 *)(u64)(pd[l3] & ~0xfffULL);
                 pt[l4] = dma_backend == DMA_BACKEND_AMD ? amdv_pte(page, permissions) : vtd_leaf_entry(page, permissions);
             }

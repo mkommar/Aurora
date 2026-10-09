@@ -17,7 +17,8 @@ typedef struct {
 } VirtioPciCapability;
 
 static int virtio_pci_capability_valid(const VirtioPciCapability *cap) {
-    return cap && cap->bar < 6 && cap->length && !(cap->offset & 3);
+    return cap && cap->bar < 6 && cap->length && !(cap->offset & 3) &&
+           cap->offset <= ~0U - cap->length;
 }
 
 static int virtio_pci_capabilities_complete(const VirtioPciCapability *common,
@@ -26,7 +27,7 @@ static int virtio_pci_capabilities_complete(const VirtioPciCapability *common,
     return virtio_pci_capability_valid(common) && common->type == VIRTIO_PCI_CAP_COMMON &&
            virtio_pci_capability_valid(notify) && notify->type == VIRTIO_PCI_CAP_NOTIFY &&
            virtio_pci_capability_valid(device) && device->type == VIRTIO_PCI_CAP_DEVICE &&
-           notify->notify_multiplier;
+           notify->notify_multiplier && notify->notify_multiplier <= notify->length;
 }
 
 static u64 virtio_pci_queue_bytes(u16 queue_size) {

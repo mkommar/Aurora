@@ -73,6 +73,7 @@ static int virtio_modern_capabilities(u32 device,VirtioPciCapability *common,
 static int virtio_modern_block_init(u32 address){
     VirtioPciCapability common={0},notify={0},config={0};
     if(pci_read(address,0)!=0x10421af4 || !virtio_modern_capabilities(address,&common,&notify,&config))return 0;
+    pci_write16(address,4,(pci_read(address,4)&0xffff)|5);
     u64 common_bar=virtio_bar(address,common.bar),notify_bar=virtio_bar(address,notify.bar),config_bar=virtio_bar(address,config.bar);
     if(!common_bar||!notify_bar||!config_bar)return 0;
     if(!dma_assign_device(address,DMA_DOMAIN_STORAGE))return 0;
@@ -174,6 +175,9 @@ static void virtio_malicious_dma_test_poll(void) {
         virtio_dma_test_pending = 0; virtio_ready = 0; outb(virtio_port + 18, 0);
         serial("IOMMU TEST: unauthorized VirtIO DMA blocked; fault latched; device quarantined source=");
         hex(dma_fault_source_id()); serial(" address="); hex(dma_fault_address_value()); serial("\r\n");
+        if (storage_ipc_complete(&virtio_storage_broker, virtio_storage_sequence,
+                                 STORAGE_IPC_OK, 0, 0) == STORAGE_IPC_E_SEQUENCE)
+            serial("IOMMU TEST: stale completion rejected after quarantine\r\n");
     } else if (++virtio_dma_test_polls == 1000000) {
         serial("IOMMU TEST: no hardware fault was latched\r\n");
         for (;;) __asm__ volatile("cli; hlt");
@@ -185,6 +189,7 @@ static void virtio_malicious_dma_test_poll(void) {
 static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
     if(!virtio_ready||count>virtio_slots*VIRTIO_SLOT_SECTORS||sector>virtio_sectors||count>virtio_sectors-sector)return 0;
     if(operation!=0&&operation!=1&&operation!=4)return 0;
+    if(operation==4&&virtio_modern&&!(virtio_features&(1U<<9)))return 1;
     if(!dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_RING,0x4000,DMA_READ|DMA_WRITE) ||
        !dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_REQUESTS,0x1000,DMA_READ|DMA_WRITE) ||
        !dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_BOUNCE,0x80000,DMA_READ|DMA_WRITE)) return 0;

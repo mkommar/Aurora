@@ -24,8 +24,8 @@ int main(void) {
     VtdUnit unit;
     assert(vtd_parse_dmar(dmar, sizeof(dmar), &unit));
     assert(unit.register_base == 0xfed90000ULL && unit.include_all);
-    assert(vtd_context_entry(7) == (1ULL | (1ULL << 2) | (7ULL << 8)));
-    assert(vtd_context_attributes(0x12345000) == (0x12345000ULL | 2));
+    assert(vtd_context_entry(0x12345000) == (0x12345000ULL | 1ULL));
+    assert(vtd_context_attributes(7) == (2ULL | (7ULL << 8)));
     assert(vtd_leaf_entry(0x2000, VTD_READ | VTD_WRITE) == 0x2003);
     assert(vtd_fault_reason(0x80000031) == 0x31);
     assert(vtd_fault_record_index(0x00000500) == 5);
