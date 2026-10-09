@@ -110,8 +110,10 @@ AuroraFS limits are 32 files, 64 KiB per file, and a flat directory; the
 ext2/FAT32 development volumes have separate limits. Builds
 preserve existing files while refreshing the bundled examples. Storage remains
 in the kernel: ATA uses IRQ14 after scheduling starts, and
-VirtIO block I/O uses batched requests and interrupt completion. Moving storage
-to a separate service with DMA isolation is future work.
+VirtIO block I/O uses batched requests and interrupt completion. The storage
+IPC header now has a host/fixture-tested generation and restart handoff
+boundary, but it is not guest ring-3 module execution or hardware DMA
+isolation. Moving the device path to a real service remains future work.
 
 ## What changed from 0.1
 

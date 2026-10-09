@@ -27,6 +27,24 @@ It remains a test artifact and is not activated by the kernel. Activation must
 first add a capability-scoped loader, fresh page-table mappings with RX/RW/NX
 permissions, service restart/timeout handling, and an IPC endpoint grant.
 
+## Storage-service boundary
+
+The storage IPC header now includes a host/fixture service boundary. A service
+must start with the broker's current generation, registered owner, and granted
+storage capability before it can dispatch a request. The broker validates
+device ownership, DMA-domain identity, request ranges and permissions, and
+single-flight sequencing. Quiesce cancels the outstanding request; handoff
+requires a newer generation, invokes DMA revocation before admitting the
+replacement, and rejects completions from the old generation. This is a
+lifecycle and ABI regression boundary, not proof that an AURMOD1 payload has
+entered ring 3 inside Aurora.
+
+The kernel still lacks dynamic page-table construction and a safe entry/exit
+path for an activated module's storage endpoint. VirtIO descriptors, DMA
+mappings, and device ownership therefore remain supervisor-owned. A future
+guest implementation must connect this contract to the existing process model
+without allowing module metadata to grant capabilities.
+
 ## Hardware boundaries
 
 This format does not provide IOMMU or DMA isolation. The kernel now has a

@@ -173,18 +173,22 @@ ABI alone does not count.
    is selected. VT-d/AMD-Vi page-table programming, fault handling, QEMU or
    selected-hardware negative DMA tests, and storage-service extraction remain
    required before claiming hardware isolation.
-3. **Storage service extraction.** The first transport milestone is now
-   implemented: `src/storage_service.h` defines a versioned, bounded
-   request/response ABI with explicit service capability, owner/device, range,
-   DMA, single-flight, completion, error, cancellation and teardown checks.
-   The VirtIO block path submits through this kernel broker before touching its
-   descriptors, so the seam is real and host-testable, but storage has **not**
-   moved to ring 3 and this does not claim a user-space service or hardware
-   IOMMU isolation. `test-storage-service.py` covers malformed requests,
-   overflow/bounds, unauthorized owner/capability/device, DMA rejection,
-   completion errors, cancellation, teardown and concurrent submission.
-   Keep boot recovery and ATA in-kernel until a ring-3 service can pass
-   read/write/flush, restart and power-loss regressions on disposable images.
+3. **Storage service extraction.** The bounded next step is implemented:
+   `src/storage_service.h` defines a versioned, bounded request/response ABI
+   with explicit service capability, owner/device, range, DMA, single-flight,
+   generation, completion, error, cancellation, quiesce and handoff checks.
+   The VirtIO block path still submits through this kernel broker before
+   touching its descriptors. The host fixture can start and dispatch a
+   generation-tagged service, cancel it, revoke its DMA domain, and hand off to
+   a validated replacement without accepting stale completions. Storage has
+   **not** moved to a guest ring-3 module: this milestone does not claim module
+   entry, hardware IOMMU isolation, or a complete storage microkernel
+   extraction. `test-storage-service.py` covers malformed requests,
+   overflow/bounds, capability/device denial, DMA rejection, startup/dispatch,
+   in-flight cancellation, stale generation rejection, restart handoff,
+   completion errors, and teardown. Keep boot recovery and ATA in-kernel until
+   a real ring-3 service can pass read/write/flush, restart and power-loss
+   regressions on disposable images.
 4. **Networking and IPRoute2 subset.** Before packaging IPRoute2, implement and
    test `NETLINK_ROUTE`, `RTM_GETLINK`, `RTM_GETADDR`, and `RTM_GETROUTE`, with
    aligned attribute validation, dump sequencing and stable errors. Do not
