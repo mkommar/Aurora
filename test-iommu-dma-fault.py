@@ -6,6 +6,7 @@ descriptor containing an unauthorized physical address and QEMU's VirtIO
 device performs the resulting transaction through its IOMMU model.
 """
 import argparse
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -57,6 +58,11 @@ def run(backend):
             return False
         if marker not in text:
             print(f'BLOCKED: QEMU {backend} did not latch the injected DMA fault')
+            print(text[-4000:])
+            return False
+        fault = re.search(r'device quarantined source=([0-9a-f]+) address=([0-9a-f]+)', text)
+        if not fault or int(fault.group(1), 16) == 0 or int(fault.group(2), 16) != 0x06000000:
+            print(f'BLOCKED: QEMU {backend} did not report the injected source and target')
             print(text[-4000:])
             return False
         if markers['stale'] not in text:

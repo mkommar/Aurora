@@ -269,7 +269,7 @@ Frame *schedule(void) {
     dma_fault_poll();
     if (dma_faults != dma_faults_reported) {
         dma_faults_reported = dma_faults;
-        serial("IOMMU: DMA fault status=");hex(dma_fault_status);serial(" reason=");hex(vtd_fault_reason(dma_fault_status));serial("; DMA disabled\r\n");
+        serial("IOMMU: DMA fault status=");hex(dma_fault_status);serial(" reason=");hex(dma_fault_reason_value());serial("; DMA disabled\r\n");
     }
     net_poll();
     native_timers();native_wake_waiters();
