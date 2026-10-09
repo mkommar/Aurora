@@ -201,7 +201,7 @@ static void create_task(u32 id,const u8 *image,u64 size,u64 text_end,u64 ro_end,
         for(u64 i=first;i<=last;i++)pd[i]=i*0x200000|PRESENT|WRITE|USER|HUGE|NX;
     }
     if(id==STORAGE_TASK)
-        pd[0x0d000000/0x200000]=0x0d000000ULL|PRESENT|USER|HUGE|NX;
+        pd[0x0d000000/0x200000]=0x0d000000ULL|PRESENT|WRITE|USER|HUGE|NX;
     memset((void *)physical(id),0,USER_SIZE);memcpy((void *)physical(id),image,size);
     BootInfo *boot=(BootInfo *)(physical(id)+BOOT_ADDRESS-USER_BASE);
     boot->id=id;
@@ -467,7 +467,7 @@ void kernel_main(void) {
     native_memory_init();
     if(native_ready){entropy_init();virtio_net_init();}
 #ifdef AURORA_SELF_TEST
-    for(int i=APP_FIRST;i<APP_FIRST+7;i++)create_task(i,probe_image,probe_image_size,PROBE_TEXT_END,PROBE_RO_END,fb);
+    for(int i=STORAGE_TASK+1;i<=STORAGE_TASK+7;i++)create_task(i,probe_image,probe_image_size,PROBE_TEXT_END,PROBE_RO_END,fb);
 #endif
     smp_init();timer_init();serial("AURORA: private CR3, W^X, IPC, PIT preemption ready\r\n");
     __atomic_store_n(&kernel_started,1,__ATOMIC_RELEASE);current_task=TASK_COUNT-1;enter_user(schedule());
