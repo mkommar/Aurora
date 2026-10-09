@@ -12,7 +12,7 @@ write_ivrs(ivrs)
 if not development.exists(): development.write_bytes(b'\0' * (16 * 1024 * 1024))
 with serial.open('w'):
     process = subprocess.Popen([
-        args.qemu, '-machine', 'q35,accel=tcg', '-m', '128M', '-device', 'amd-iommu,pt=off',
+        args.qemu, '-machine', 'q35,accel=tcg', '-m', '256M', '-device', 'amd-iommu,pt=off',
         '-acpitable', f'file={ivrs}', '-drive', f'format=raw,file={build / "aurora.img"}',
         '-drive', f'format=raw,file={development},if=none,id=development',
         '-device', 'virtio-blk-pci,drive=development,disable-legacy=on,iommu_platform=on', '-display', 'none',

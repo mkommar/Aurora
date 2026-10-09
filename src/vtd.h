@@ -7,6 +7,7 @@
 #define VTD_CONTEXT_PRESENT 1ULL
 #define VTD_CONTEXT_TRANSLATE 0ULL
 #define VTD_CONTEXT_AW_4LEVEL 2ULL
+#define VTD_FAULT_RECORD_OFFSET 0x220
 #define VTD_READ 1ULL
 #define VTD_WRITE 2ULL
 #define VTD_UNUSED __attribute__((unused))
@@ -69,12 +70,16 @@ static VTD_UNUSED u32 vtd_fault_record_index(u32 fault_status) {
     return (fault_status >> 8) & 0xf;
 }
 
+static VTD_UNUSED int vtd_fault_pending(u32 fault_status) {
+    return !!(fault_status & (1U << 1));
+}
+
 static VTD_UNUSED u32 vtd_fault_record_reason(u64 record_high) {
     return (u32)((record_high >> 32) & 0xff);
 }
 
 static VTD_UNUSED u32 vtd_fault_record_source(u64 record_high) {
-    return (u32)((record_high >> 16) & 0xffff);
+    return (u32)(record_high & 0xffff);
 }
 
 static VTD_UNUSED u64 vtd_fault_record_address(u64 record_low) {

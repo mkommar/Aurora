@@ -7,6 +7,8 @@
 #define AMD_IVRS_IVHD_40 0x40
 #define AMD_IVRS_MAX_DEVICES 32
 #define AMDV_UNUSED __attribute__((unused))
+#define AMDV_DEV_PERM_READ (1ULL << 61)
+#define AMDV_DEV_PERM_WRITE (1ULL << 62)
 
 typedef struct {
     u64 register_base;
@@ -70,15 +72,20 @@ static AMDV_UNUSED int amdv_parse_ivrs(const u8 *table, u32 length, AmdvInfo *in
 
 static AMDV_UNUSED u64 amdv_dte(u64 root, u16 domain_id) {
     (void)domain_id;
-    return (root & ~0xfffULL) | 3ULL | (4ULL << 9);
+    return (root & ~0xfffULL) | 3ULL | AMDV_DEV_PERM_READ | AMDV_DEV_PERM_WRITE | (4ULL << 9);
+}
+
+static AMDV_UNUSED u64 amdv_table_entry(u64 table, u32 next_level) {
+    return (table & ~0xfffULL) | 1ULL | AMDV_DEV_PERM_READ | AMDV_DEV_PERM_WRITE |
+           ((u64)(next_level & 7) << 9);
 }
 
 static AMDV_UNUSED u64 amdv_pte(u64 physical, u32 permissions) {
-    return (physical & ~0xfffULL) | ((permissions & 1) ? 1ULL : 0) |
-           ((permissions & 2) ? 2ULL : 0);
+    return (physical & ~0xfffULL) | ((permissions & 1) ? AMDV_DEV_PERM_READ : 0) |
+           ((permissions & 2) ? AMDV_DEV_PERM_WRITE : 0);
 }
 
-static AMDV_UNUSED u32 amdv_fault_type(u64 event) { return (u32)((event >> 28) & 0xf); }
+static AMDV_UNUSED u32 amdv_fault_type(u64 event) { return (u32)((event >> 48) & 0xffff); }
 static AMDV_UNUSED u32 amdv_fault_source(u64 event) { return (u32)(event & 0xffff); }
 static AMDV_UNUSED u64 amdv_fault_address(u64 event_address) { return event_address & ~0xfffULL; }
 
