@@ -2,8 +2,7 @@
 
 This work is in progress. A source lock and native build runner are implemented;
 they do not mean that all listed packages have been ported. The installed C
-compiler remains the bootstrap GCC. Upstream dpkg and APT are not yet installed,
-and dependency resolution is not implemented.
+compiler remains the bootstrap GCC. Upstream dpkg and APT are not yet installed.
 
 ## Build inputs and execution
 
@@ -28,19 +27,34 @@ successive package builds still needs testing. Build dependencies are recorded;
 runtime dependencies need to be audited per package before release. This runner
 is not a dependency solver.
 
-The GNU Make recipe now has an installer path after package creation.
+The diffutils entry is the reference GNU recipe for future m4 and related
+ports: add a verified source-lock record, list only prerequisites already
+available in the candidate image, add a dedicated `build.sh` case when the
+upstream test/install sequence needs policy, and keep configure, `make`,
+`make check`, `DESTDIR` staging, package metadata and a `--version` smoke check
+inside Aurora. Never add a source checksum unless it is established from an
+authoritative source or an existing repository cache.
+
+The GNU Make recipe now has an installer path after package creation, and
+diffutils is the first explicit native prerequisite recipe using its existing
+pinned GNU source URL and SHA-256.
 `packages/install.sh` verifies the package sidecar or an explicitly supplied
 download hash, exact Debian archive members and types, package identity/version/
 architecture, data paths under `/opt/aurora`, the package file list, and every
 installed file hash. It rejects traversal, symlink/hard-link members and unsafe
 overwrites, records ownership under `/var/lib/aurora/packages`, and rolls back
 created files/state on failure. Supported commands are `install.sh ARCHIVE
-CHECKSUM ROOT`, `install.sh --url URL --sha256 HASH --root ROOT`, `--owner
-/opt/aurora/path`, `--list aurora-name`, and `--remove aurora-name`. Removal is
-allowed only when every recorded file still has its recorded hash; upgrades,
-dependencies, maintainer scripts, conffiles, permissions/owners and triggers are
-outside this boundary. Reinstalling an installed package is deterministic and
-refused. This is not dpkg or APT.
+CHECKSUM ROOT`, multiple local archives, `--repository DIR` for generated
+`Packages` plus `pool/` metadata, `install.sh --url URL --sha256 HASH --root
+ROOT`, `--owner /opt/aurora/path`, `--list aurora-name`, and `--remove
+aurora-name`. Dependencies support only comma-separated exact Aurora package
+names. Alternatives, version operators, conflicts, virtual packages,
+architecture qualifiers, maintainer scripts, conffiles, permissions/owners and
+triggers are unsupported. Cycles and missing packages are diagnosed before
+mutation; upgrades replace only unchanged owned files, downgrades require
+`--allow-downgrade`, and removal refuses packages still required by installed
+dependents. Version ordering is a bounded numeric-component/ASCII-suffix
+comparator, not full Debian version semantics. This is not dpkg or APT.
 
 Local patches are SHA-256 pinned, verified before staging and again in Aurora,
 applied with GNU patch, and copied into the package's documentation. The musl
@@ -51,10 +65,11 @@ Candidate packages use `/opt/aurora` and `musl-linux-amd64`, separate from the
 bootstrap tools. Stock Debian glibc packages are not compatible with this image.
 The initial archive writer bootstraps the `.deb` format. The installer uses
 Aurora's existing HTTPS-enabled `curl` for optional download-then-install, but does not
-consume APT metadata or solve dependencies. An APT-compatible repository and
-authenticated index policy remain follow-up work, rather than a custom installer
-being presented as APT. Archive validation uses temporary listing files, not
-`/proc/self/fd`, so procfs is not required.
+fetch dependencies or claim APT compatibility. It consumes only the generated
+local `Packages` and `pool/` tree for dependency selection. An authenticated
+index policy remains follow-up work. Archive validation and repository parsing
+use ordinary temporary files, not `/proc/self/fd` or process substitution, so
+procfs is not required.
 
 ## GitHub Pages distribution
 
@@ -119,6 +134,9 @@ python3 test-package-pages.py
 checks successful install, ownership/list queries, safe removal, checksum
 rejection, duplicate/overwrite refusal, preflight collision behavior, install
 rollback and path traversal rejection.
+`python tests/package-lifecycle-host.py` covers dependency ordering, missing
+dependencies, cycles, upgrades, bounded version ordering, downgrade rejection,
+file replacement and dependency-aware removal.
 The Make package's guest download/configure/build/package/install/smoke flow
 still requires a prepared development image with the bootstrap GNU tools and
 network access. No pinned Make 4.4.1 source archive is currently cached in the
