@@ -3,7 +3,7 @@
 This work is in progress. A source lock and native build runner are implemented;
 they do not mean that all listed packages have been ported. The installed C
 compiler remains the bootstrap GCC. Upstream dpkg and APT are not yet installed,
-and package removal, dependency resolution and rollback are not yet demonstrated.
+and dependency resolution is not implemented.
 
 ## Build inputs and execution
 
@@ -28,15 +28,19 @@ successive package builds still needs testing. Build dependencies are recorded;
 runtime dependencies need to be audited per package before release. This runner
 is not a dependency solver.
 
-The GNU Make recipe now has an initial installer path after package creation.
-`packages/install.sh` verifies the package sidecar hash, exact Debian archive
-members, package identity/architecture, data paths under `/opt/aurora`, the
-package file list, and every installed file hash. It refuses to overwrite an
-existing file, installs the first candidate package under `/opt/aurora`, records
-its file ownership list under `/var/lib/aurora/packages`, and removes files it
-has moved if the install transaction fails. The Make recipe then invokes the
-installed binary and builds a small smoke target. This is a first-package
-installer, not a general dependency-aware package manager or removal system.
+The GNU Make recipe now has an installer path after package creation.
+`packages/install.sh` verifies the package sidecar or an explicitly supplied
+download hash, exact Debian archive members and types, package identity/version/
+architecture, data paths under `/opt/aurora`, the package file list, and every
+installed file hash. It rejects traversal, symlink/hard-link members and unsafe
+overwrites, records ownership under `/var/lib/aurora/packages`, and rolls back
+created files/state on failure. Supported commands are `install.sh ARCHIVE
+CHECKSUM ROOT`, `install.sh --url URL --sha256 HASH --root ROOT`, `--owner
+/opt/aurora/path`, `--list aurora-name`, and `--remove aurora-name`. Removal is
+allowed only when every recorded file still has its recorded hash; upgrades,
+dependencies, maintainer scripts, conffiles, permissions/owners and triggers are
+outside this boundary. Reinstalling an installed package is deterministic and
+refused. This is not dpkg or APT.
 
 Local patches are SHA-256 pinned, verified before staging and again in Aurora,
 applied with GNU patch, and copied into the package's documentation. The musl
@@ -45,10 +49,12 @@ package recipe has not yet completed its validation run.
 
 Candidate packages use `/opt/aurora` and `musl-linux-amd64`, separate from the
 bootstrap tools. Stock Debian glibc packages are not compatible with this image.
-The initial archive writer bootstraps the `.deb` format; ownership databases,
-dependency checks and removal should use upstream dpkg once its native port is
-validated. An APT-compatible repository and authenticated index policy remain
-follow-up work, rather than a custom installer being presented as APT.
+The initial archive writer bootstraps the `.deb` format. The installer uses
+Aurora's existing HTTPS-enabled `curl` for optional download-then-install, but does not
+consume APT metadata or solve dependencies. An APT-compatible repository and
+authenticated index policy remain follow-up work, rather than a custom installer
+being presented as APT. Archive validation uses temporary listing files, not
+`/proc/self/fd`, so procfs is not required.
 
 ## GitHub Pages distribution
 
@@ -110,8 +116,9 @@ python3 test-package-pages.py
 ```
 
 `python tests/package-install-host.py` builds synthetic Debian archives and
-checks successful install, checksum rejection, duplicate/overwrite refusal,
-preflight collision behavior, install rollback and path traversal rejection.
+checks successful install, ownership/list queries, safe removal, checksum
+rejection, duplicate/overwrite refusal, preflight collision behavior, install
+rollback and path traversal rejection.
 The Make package's guest download/configure/build/package/install/smoke flow
 still requires a prepared development image with the bootstrap GNU tools and
 network access. No pinned Make 4.4.1 source archive is currently cached in the

@@ -55,9 +55,40 @@ with tempfile.TemporaryDirectory(prefix='aurora-package-install-test-') as temp:
     assert 'AURORA_PACKAGE_INSTALLED aurora-make 4.4.1-1' in result.stdout
     assert (root / 'opt/aurora/bin/make').read_bytes() == payload['opt/aurora/bin/make']
     assert (root / 'var/lib/aurora/packages/aurora-make_4.4.1-1.files').exists()
+    owner = subprocess.run([str(INSTALLER), '--root', str(root), '--owner', '/opt/aurora/bin/make'],
+                           capture_output=True, text=True, check=True)
+    assert owner.stdout.strip() == 'aurora-make_4.4.1-1'
+    listing = subprocess.run([str(INSTALLER), '--root', str(root), '--list', 'aurora-make'],
+                             capture_output=True, text=True, check=True)
+    assert 'opt/aurora/bin/make' in listing.stdout
 
     result = install(deb, digest, root, False)
     assert 'Refusing to overwrite' in result.stderr
+    removed = subprocess.run([str(INSTALLER), '--root', str(root), '--remove', 'aurora-make'],
+                             capture_output=True, text=True, check=True)
+    assert 'AURORA_PACKAGE_REMOVED aurora-make' in removed.stdout
+    fake_bin = temp / 'fake-bin'; fake_bin.mkdir()
+    fake_curl = fake_bin / 'curl'
+    fake_curl.write_text('''#!/bin/bash
+while test "$#" -gt 0; do
+    if test "$1" = --output; then cp "$FAKE_PACKAGE" "$2"; exit 0; fi
+    shift
+done
+exit 1
+''')
+    fake_curl.chmod(0o755)
+    downloaded_root = temp / 'downloaded'
+    download_hash = digest.read_text().split()[0]
+    download = subprocess.run([
+        str(INSTALLER), '--root', str(downloaded_root), '--url',
+        'https://example.invalid/package.deb', '--sha256', download_hash],
+        capture_output=True, text=True,
+        env={**os.environ, 'PATH': f'{fake_bin}:{os.environ["PATH"]}', 'FAKE_PACKAGE': str(deb)})
+    assert download.returncode == 0, download.stdout + download.stderr
+    assert (downloaded_root / 'opt/aurora/bin/make').exists()
+    assert not (root / 'opt/aurora/bin/make').exists()
+    assert not (root / 'var/lib/aurora/packages/aurora-make.current').exists()
+
 
     bad_root = temp / 'bad-checksum-root'; bad_root.mkdir()
     bad_digest = temp / 'bad.sha256'; bad_digest.write_text('0' * 64 + '  package.deb\n')
