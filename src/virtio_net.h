@@ -11,6 +11,7 @@
 static u16 net_port,net_rx_size,net_tx_size,net_rx_used,net_tx_used,net_rx_avail,net_tx_avail;
 static u16 entropy_port,entropy_size,entropy_avail,entropy_used;
 static int net_ready,net_irq_mode,entropy_ready,net_announced;
+static u32 net_device,entropy_device;
 static u32 net_irq_line;
 static u8 net_tx_busy[256];
 volatile u64 net_interrupts,net_bad_descriptors,net_entropy_bytes,net_entropy_failures;
@@ -18,6 +19,7 @@ static u64 ring_used(u64 base,u16 size){return (base+16*size+6+2*size+4095)&~409
 static void entropy_init(void){
     for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
         u32 device=(bus<<16)|(slot<<11);if(pci_read(device,0)!=0x10051af4)continue;
+        if(!dma_assign_device(device,DMA_DOMAIN_ENTROPY))continue;entropy_device=device;
         u32 bar=pci_read(device,0x10);if(!(bar&1)||bar>65535)continue;
         entropy_port=bar&~3U;pci_write16(device,4,(pci_read(device,4)&0xffff)|5);
         outb(entropy_port+18,0);outb(entropy_port+18,1);outb(entropy_port+18,3);io_write32(entropy_port+4,0);
@@ -30,6 +32,8 @@ static void entropy_init(void){
 }
 static i64 entropy_fill(void *output,u64 count){
     if(!entropy_ready)return -19;if(!count)return 0;u64 completed=0;
+    if(!dma_validate(entropy_device,DMA_DOMAIN_ENTROPY,RNG_RING,0x4000,DMA_READ|DMA_WRITE) ||
+       !dma_validate(entropy_device,DMA_DOMAIN_ENTROPY,RNG_DATA,0x1000,DMA_WRITE)) return -19;
     while(completed<count){u32 n=count-completed>256?256:(u32)(count-completed);
         VirtioDescriptor *d=(void *)RNG_RING;d[0]=(VirtioDescriptor){RNG_DATA,n,2,0};
         volatile u16 *avail=(void *)(RNG_RING+16*entropy_size),*used=(void *)ring_used(RNG_RING,entropy_size);
@@ -56,7 +60,9 @@ static void net_reclaim_tx(void){
         net_tx_busy[id]=0;net_tx_used++;}
 }
 int aurora_net_transmit(const void *packet,unsigned length){
-    if(!net_ready||!entropy_ready||length>1518||length<14)return 0;net_reclaim_tx();if(!net_ready)return 0;
+    if(!net_ready||!entropy_ready||length>1518||length<14 ||
+       !dma_validate(net_device,DMA_DOMAIN_NET,NET_TX_RING,0x10000,DMA_READ|DMA_WRITE) ||
+       !dma_validate(net_device,DMA_DOMAIN_NET,NET_TX_DATA,0x80000,DMA_READ|DMA_WRITE))return 0;net_reclaim_tx();if(!net_ready)return 0;
     u32 id;for(id=0;id<net_tx_size&&net_tx_busy[id];id++){}if(id==net_tx_size)return 0;
     u8 *buffer=(void *)(NET_TX_DATA+id*NET_BUFFER);memset(buffer,0,10);memcpy(buffer+10,packet,length);
     VirtioDescriptor *d=(void *)NET_TX_RING;d[id]=(VirtioDescriptor){(u64)buffer,length+10,0,0};net_tx_busy[id]=1;
@@ -64,7 +70,10 @@ int aurora_net_transmit(const void *packet,unsigned length){
     __atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=++net_tx_avail;__atomic_thread_fence(__ATOMIC_SEQ_CST);outw(net_port+16,1);return 1;
 }
 static void net_poll(void){
-    if(!net_ready)return;net_reclaim_tx();if(!net_ready)return;
+    if(!net_ready)return;
+    if(!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_RING,0x10000,DMA_READ|DMA_WRITE) ||
+       !dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_DATA,0x100000,DMA_READ|DMA_WRITE)) { net_ready=0; return; }
+    net_reclaim_tx();if(!net_ready)return;
     volatile u16 *used=(void *)ring_used(NET_RX_RING,net_rx_size),*avail=(void *)(NET_RX_RING+16*net_rx_size);
     __atomic_thread_fence(__ATOMIC_ACQUIRE);
     if((u16)(used[1]-net_rx_used)>net_rx_size){net_bad_descriptors++;net_ready=0;return;}
@@ -86,6 +95,7 @@ static void virtio_net_init(void){
     if(!entropy_ready)return;
     for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
         u32 device=(bus<<16)|(slot<<11);if(pci_read(device,0)!=0x10001af4)continue;
+        if(!dma_assign_device(device,DMA_DOMAIN_NET))continue;net_device=device;
         u32 bar=pci_read(device,0x10);if(!(bar&1)||bar>65535)continue;net_port=bar&~3U;
         pci_write16(device,4,(pci_read(device,4)&0xffff)|5);outb(net_port+18,0);outb(net_port+18,1);outb(net_port+18,3);
         u32 features=io_read32(net_port);if(!(features&(1U<<5))){outb(net_port+18,128);return;}

@@ -6,6 +6,7 @@
 static u16 virtio_port,virtio_queue_size,virtio_avail,virtio_used;
 static u64 virtio_sectors;
 static u32 virtio_features;
+static u32 virtio_device;
 static int virtio_ready,virtio_present;
 static int virtio_message_mode;
 static u32 virtio_irq_line,virtio_slots;
@@ -32,6 +33,7 @@ static u8 *virtio_bounce(u32 slot){return (u8 *)(VIRTIO_BOUNCE+(u64)slot*VIRTIO_
 static void virtio_block_init(void){
     for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
         u32 address=(bus<<16)|(slot<<11);if(pci_read(address,0)!=0x10011af4)continue;
+        if(!dma_assign_device(address,DMA_DOMAIN_STORAGE))continue;virtio_device=address;
         u32 bar=pci_read(address,0x10);if(!(bar&1)||bar>65535)continue;
         virtio_present=1;virtio_port=bar&~3U;io_write32(0xcf8,0x80000000U|address|4);io_write32(0xcfc,(pci_read(address,4)&0xffff)|5);
         outb(virtio_port+18,0);outb(virtio_port+18,1);outb(virtio_port+18,3);
@@ -53,6 +55,9 @@ static void virtio_block_init(void){
 #include "virtio_completion.h"
 static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
     if(!virtio_ready||count>virtio_slots*VIRTIO_SLOT_SECTORS||sector>virtio_sectors||count>virtio_sectors-sector)return 0;
+    if(!dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_RING,0x4000,DMA_READ|DMA_WRITE) ||
+       !dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_REQUESTS,0x1000,DMA_READ|DMA_WRITE) ||
+       !dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_BOUNCE,0x80000,DMA_READ|DMA_WRITE)) return 0;
     if(operation==4&&!(virtio_features&(1U<<9)))return 0;
     VirtioDescriptor *desc=(VirtioDescriptor *)VIRTIO_RING;
     volatile u16 *avail=(volatile u16 *)(VIRTIO_RING+16*virtio_queue_size);

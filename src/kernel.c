@@ -4,6 +4,8 @@
 #include "images.h"
 #include "network_api.h"
 #include "radeon_service.h"
+#include "service_abi.h"
+#include "dma.h"
 static int radeon_present;
 static u16 radeon_device;
 static u32 radeon_bar0, radeon_irq, radeon_generation;
@@ -73,6 +75,24 @@ static void native_timers(void);
 static void native_wake_waiters(void);
 static void net_poll(void);
 static Gate idt[256];
+#define DMA_DOMAIN_STORAGE 1
+#define DMA_DOMAIN_NET 2
+#define DMA_DOMAIN_ENTROPY 3
+static int dma_bootstrap(void) {
+    if (!dma_init(DMA_BACKEND_SOFTWARE)) return 0;
+    u32 storage=dma_domain_create(SERVICE_STORAGE,SERVICE_CAP_STORAGE,0x0d000000ULL,0x0d100000ULL);
+    u32 net=dma_domain_create(SERVICE_NET,SERVICE_CAP_NET,0x0e100000ULL,0x0e220000ULL);
+    u32 entropy=dma_domain_create(SERVICE_ENTROPY,SERVICE_CAP_ENTROPY,0x0e300000ULL,0x0e305000ULL);
+    if (storage!=DMA_DOMAIN_STORAGE || net!=DMA_DOMAIN_NET || entropy!=DMA_DOMAIN_ENTROPY) return 0;
+    return dma_map(storage,0x0d000000ULL,0x4000,DMA_READ|DMA_WRITE) &&
+           dma_map(storage,0x0d004000ULL,0x1000,DMA_READ|DMA_WRITE) &&
+           dma_map(storage,0x0d080000ULL,0x80000,DMA_READ|DMA_WRITE) &&
+           dma_map(net,0x0e100000ULL,0x20000,DMA_READ|DMA_WRITE) &&
+           dma_map(net,0x0e120000ULL,0x100000,DMA_READ|DMA_WRITE) &&
+           dma_map(net,0x0e1a0000ULL,0x80000,DMA_READ|DMA_WRITE) &&
+           dma_map(entropy,0x0e300000ULL,0x4000,DMA_READ|DMA_WRITE) &&
+           dma_map(entropy,0x0e304000ULL,0x1000,DMA_READ|DMA_WRITE);
+}
 
 /* Named counters are also consumed by the QMP integration tests. */
 volatile u64 timer_ticks,ipc_messages,context_switches;
@@ -389,6 +409,7 @@ void kernel_main(void) {
     serial("AURORA: microkernel 0.2 / 64-bit\r\n");memset((void *)KERNEL_STATE,0,KERNEL_STATE_SIZE);tables_init(0);
     for(int i=0;i<TASK_COUNT;i++){tasks[i].state=DEAD;task_cpu[i]=-1;task_affinity[i]=1;}
     native_clock_init();
+    if (!dma_bootstrap()) panic("DMA isolation unavailable");
     virtio_block_init();
     filesystem_init();
     native_fs_init();vfs_reclaim_orphans();

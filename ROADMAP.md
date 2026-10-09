@@ -27,9 +27,13 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    multi-sector transfers use it), interrupt-driven ATA on IRQ14 with sequence
    tags and tick deadlines for both the AuroraFS boot volume and the ATA
    development path, and the legacy AuroraFS calls now sleep under the filesystem
-   mutex. Remaining: IOMMU/DMA isolation and moving storage into a service.
+   mutex. Remaining: hardware IOMMU/DMA isolation and moving storage into a service.
    The existing `SERVICE_STORAGE` ABI is only a reserved contract; it is not
-   an active storage service and must not be treated as one.
+   an active storage service and must not be treated as one. The current
+   VirtIO block, network, and entropy paths now also use capability-scoped
+   software DMA domains with explicit ownership and mapped-range checks. This
+   is not hardware DMA protection; hardware programming, fault handling, and
+   a negative hardware DMA test remain open.
 2. **Complete build-critical POSIX and C-runtime support.** Implemented:
    poll/select, blocking waits, shared-VM musl pthreads, TLS, futex wait/wake/
    requeue, robust mutex cleanup and shared descriptor/filesystem state. A small
@@ -161,12 +165,14 @@ ABI alone does not count.
     handling, and an IPC endpoint grant remain future runtime work. Capability
     declarations in an image are not authoritative, and no IOMMU/DMA isolation
     is implied.
-2. **DMA/IOMMU isolation.** Define a device-domain allocator and page-table
-   ownership contract around `SERVICE_STORAGE`/`SERVICE_NET`; implement real
-   VT-d/AMD-Vi page-table programming and fault handling, then test that a
-   device cannot DMA outside its grant in QEMU or on selected hardware.
-   Acceptance requires a hardware-enforced negative DMA test. Software buffer
-   bounds alone do not satisfy this milestone.
+2. **DMA/IOMMU isolation.** The bounded software stage is implemented: a
+   capability-scoped manager assigns devices explicitly, maps only aligned
+   non-overflowing ranges, denies unmapped/foreign ranges, and supports unmap,
+   revoke, duplicate-ownership rejection, and teardown. `tests/dma-host.c`
+   covers this stage, which fails closed when the unavailable hardware backend
+   is selected. VT-d/AMD-Vi page-table programming, fault handling, QEMU or
+   selected-hardware negative DMA tests, and storage-service extraction remain
+   required before claiming hardware isolation.
 3. **Storage service extraction.** Move one non-boot block path behind the
    existing ring shape only after milestone 2, with bounded request ownership,
    completion/error/cancel messages and service restart behavior. Keep boot

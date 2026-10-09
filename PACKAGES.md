@@ -4,6 +4,12 @@ This work is in progress. A source lock and native build runner are implemented;
 they do not mean that all listed packages have been ported. The installed C
 compiler remains the bootstrap GCC. Upstream dpkg and APT are not yet installed.
 
+Device-facing service extraction is deliberately separate from package work.
+The kernel's current VirtIO paths use explicit software DMA domains and
+deny-by-default device ownership, but `SERVICE_STORAGE` remains a reserved
+capability contract rather than an extracted storage service. Package tooling
+must not be used as evidence of storage isolation or hardware IOMMU support.
+
 The [LFS systemd book](https://www.linuxfromscratch.org/lfs/view/systemd/)
 is the reference for dependency order and host-tool vocabulary. Aurora retains
 musl, its custom kernel and its own syscall/device boundaries; LFS does not
