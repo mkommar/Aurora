@@ -393,8 +393,8 @@ static DMA_UNUSED void dma_fault_poll(void) {
         } else {
             u32 index = vtd_fault_record_index(status), offset = 0x40 + index * 16;
             u64 low = dma_mmio_read(offset), high = dma_mmio_read(offset + 8);
-            reason = vtd_fault_reason((u32)low); source = vtd_fault_record_source(low);
-            address = vtd_fault_record_address(high);
+            reason = vtd_fault_record_reason(high); source = vtd_fault_record_source(high);
+            address = vtd_fault_record_address(low);
         }
         dma_fault_latch(status, source, address, reason);
         if (dma_backend == DMA_BACKEND_HARDWARE) dma_mmio_write(0x34, status);
