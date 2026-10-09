@@ -165,14 +165,22 @@ ABI alone does not count.
     handling, and an IPC endpoint grant remain future runtime work. Capability
     declarations in an image are not authoritative, and no IOMMU/DMA isolation
     is implied.
-2. **DMA/IOMMU isolation.** The bounded software stage is implemented: a
-   capability-scoped manager assigns devices explicitly, maps only aligned
-   non-overflowing ranges, denies unmapped/foreign ranges, and supports unmap,
-   revoke, duplicate-ownership rejection, and teardown. `tests/dma-host.c`
-   covers this stage, which fails closed when the unavailable hardware backend
-   is selected. VT-d/AMD-Vi page-table programming, fault handling, QEMU or
-   selected-hardware negative DMA tests, and storage-service extraction remain
-   required before claiming hardware isolation.
+2. **DMA/IOMMU isolation.** The first hardware stage is implemented for Intel
+   VT-d: Aurora validates an ACPI DMAR/DRHD table, enables one remapping unit,
+   builds four-level second-level identity mappings for the three existing
+   capability-scoped VirtIO domains, assigns only discovered VirtIO source IDs,
+   and flushes context/IOTLB state before use and after unmap, revoke, or
+   teardown. A VT-d fault disables the DMA backend rather than falling back to
+   unrestricted physical DMA. `tests/dma-host.c` and `tests/vtd-host.c` cover
+   software ownership, DMAR parsing, table construction and fault decoding;
+   `test-iommu.py` boots the VirtIO block path with QEMU's `intel-iommu`, while
+   `test-iommu-fail-closed.py` verifies startup refusal without DMAR/VT-d. The
+   QEMU negative boundary is deliberate: this tree has no malicious PCI test
+   device, so unauthorized mapping and fault behavior are covered by the host
+   table tests and the no-IOMMU refusal test, not claimed as a guest DMA attack.
+   AMD-Vi, interrupt-remapping, queued invalidation, arbitrary PCI functions,
+   devices outside the include-all DRHD, and selected physical hardware remain
+   unsupported and must stay fail-closed.
 3. **Storage service extraction.** The bounded guest implementation is added:
    the built-in storage service is compiled as a candidate ring-3 task, reaches a
    capability-gated `SYS_STORAGE` endpoint, and uses the existing VirtIO broker

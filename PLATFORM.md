@@ -133,8 +133,15 @@ state and stacks lie below 128 MiB.
 
 ## Limits
 
-Storage still runs inside the kernel without IOMMU isolation. The VirtIO path
-now crosses the versioned `storage_service.h` broker seam, which validates a
+Storage still runs inside the kernel. QEMU and supported Intel systems with an
+ACPI DMAR include-all VT-d unit now get hardware translation for the existing
+VirtIO block, network and entropy windows. Run `python test-iommu.py
+--build-dir build` with QEMU's `-machine q35` and
+`-device intel-iommu,intremap=on`; the harness injects a checksum-valid
+include-all DMAR/DRHD table at the emulated unit's `0xfed90000` because the
+stock SeaBIOS used by QEMU 8.2 does not publish one. `test-iommu-fail-closed.py`
+verifies that a guest without DMAR refuses DMA-backed startup. The VirtIO path now crosses the
+versioned `storage_service.h` broker seam, which validates a
 single bounded request and owns its completion/cancel lifecycle; it is not yet
 a ring-3 service and does not transfer device ownership out of the kernel. Only one
 batch is in flight per caller. There are no PTYs, so full job-control terminal
@@ -142,4 +149,6 @@ semantics are pending. `ITIMER_VIRTUAL` and `ITIMER_PROF` count wall-clock
 ticks rather than consumed CPU time. Task and page-table storage is fixed at
 32 slots. There is no
 disk-backed paging; overcommitted memory that is finally touched without free
-RAM ends the faulting process rather than reclaiming pages.
+RAM ends the faulting process rather than reclaiming pages. AMD-Vi,
+non-include-all DMAR scope handling, queued invalidation, interrupt remapping,
+and arbitrary physical PCI devices remain unsupported and fail closed.
