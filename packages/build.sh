@@ -17,9 +17,15 @@ echo "AURORA_PACKAGE_START $name $version"
 exec 3>&1
 (
     cd "$base/cache"
+    source_url=${mirror_url:-$url}
     if ! test -f "$archive"; then
-        curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 \
-            --output "$archive.partial" "$url"
+        if test -n "${mirror_url:-}"; then
+            curl --fail --location --retry 3 --output "$archive.partial" \
+                "$source_url/$archive"
+        else
+            curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 \
+                --output "$archive.partial" "$source_url/$archive"
+        fi
         printf '%s  %s\n' "$sha256" "$archive.partial" | sha256sum -c -
         mv "$archive.partial" "$archive"
     fi

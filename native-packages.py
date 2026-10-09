@@ -10,6 +10,7 @@ import re
 import shlex
 from aurora_vm import run
 from image_access import read_ext2_files
+from native_package_mirror import NativePackageMirror
 
 
 def harvest(folder,names):
@@ -33,7 +34,7 @@ def harvest(folder,names):
                 print(f'Artifact unavailable: {path}: {error}',flush=True)
 
 
-def payload(names,retry=False):
+def payload(names,retry=False,mirror_url=''):
     raw=Path('packages/sources.lock.json').read_bytes()
     lock=json.loads(raw)['packages']
     recipe=Path('packages/build.sh').read_bytes()
@@ -69,6 +70,7 @@ def payload(names,retry=False):
         # Build dependencies are recorded separately; only explicitly declared
         # runtime dependencies become Debian Depends fields.
         env['depends']=', '.join('aurora-'+n for n in meta.get('runtime_dependencies',[]))
+        env['mirror_url']=mirror_url
         envtext=''.join(k+'='+shlex.quote(v)+'\n' for k,v in env.items())
         files['/work/package-'+name+'.env']=envtext.encode()
         script+=['cp /work/package-'+name+'.env /work/packages/'+name+'.env']
@@ -93,10 +95,20 @@ if __name__ == '__main__':
     parser.add_argument('--timeout',type=int,default=14400)
     parser.add_argument('--cpus',type=int,default=1)
     parser.add_argument('--port',type=int,default=4456)
+    parser.add_argument('--mirror-cache',help='serve hash-verified source archives through QEMU NAT')
+    parser.add_argument('--mirror-port',type=int,default=8080)
     args=parser.parse_args()
     if args.retry and not args.resume: parser.error('--retry requires --resume')
-    files,script=payload(args.packages,args.retry)
+    mirror=None
+    if args.mirror_cache:
+        source_lock=json.loads(Path('packages/sources.lock.json').read_bytes())['packages']
+        mirror=NativePackageMirror(args.mirror_cache,source_lock,args.packages)
+        mirror.start()
+    mirror_url=mirror.guest_url(args.mirror_port) if mirror else ''
+    files,script=payload(args.packages,args.retry,mirror_url)
     path=Path(args.folder);path.mkdir(parents=True,exist_ok=True)
     job=path/'job.sh';job.write_text(script,encoding='utf-8',newline='\n')
-    run(job,path,disk=args.disk,resume=args.resume,files=files,timeout=args.timeout,cpus=args.cpus,port=args.port,network_ready=True)
+    forward=(mirror.host_port,args.mirror_port) if mirror else None
+    run(job,path,disk=args.disk,resume=args.resume,files=files,timeout=args.timeout,cpus=args.cpus,port=args.port,network_ready=True,host_forward=forward)
     harvest(path,args.packages)
+    if mirror: mirror.stop()

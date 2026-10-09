@@ -82,6 +82,10 @@ with tempfile.TemporaryDirectory(prefix="aurora-package-lifecycle-") as temporar
     assert run(upgrade_root, v1).returncode == 0
     assert run(upgrade_root, v2).returncode == 0
     assert (upgrade_root / shared).read_bytes() == b"two\n"
+    same_version = run(upgrade_root, v2)
+    assert same_version.returncode != 0
+    assert "Refusing to overwrite installed package" in same_version.stderr
+    assert (upgrade_root / shared).read_bytes() == b"two\n"
     assert run(upgrade_root, v1).returncode != 0
     assert "Refusing downgrade" in run(upgrade_root, v1).stderr
 
