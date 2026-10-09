@@ -149,13 +149,18 @@ These are the next bounded milestones, in dependency order. A milestone is not
 complete until its acceptance test is recorded; a design document or reserved
 ABI alone does not count.
 
-1. **Loadable user-service foundation (current milestone).** Package an
-   already-linked ring-3 service in `AURMOD1`, validate bounds and SHA-256, and
-   exercise the unload policy with the host regression. The self-test build
-   emits `build/selftest/modules/probe.mod`. Acceptance: the module-format host
-   test passes and a malformed/hash-corrupt module is rejected before staging.
-   Runtime activation remains blocked until page-table grants, capability
-   plumbing, service restart and timeout handling are implemented.
+1. **Loadable user-service foundation (implemented bounded milestone).** Package
+    an already-linked ring-3 service in `AURMOD1`, validate bounds and SHA-256,
+    authorize against an external deny-by-default grant set, stage and commit a
+    service registration, enforce the grant at each privileged operation, and
+    exercise duplicate, malformed, rollback and unload failure paths. The
+    self-test build emits `build/selftest/modules/probe.mod`; host acceptance is
+    covered by `tests/module-format-host.py` and
+    `tests/module-activation-host.py`. This is not arbitrary code execution:
+    fresh guest page-table mappings, ring-3 entry, service restart/timeout
+    handling, and an IPC endpoint grant remain future runtime work. Capability
+    declarations in an image are not authoritative, and no IOMMU/DMA isolation
+    is implied.
 2. **DMA/IOMMU isolation.** Define a device-domain allocator and page-table
    ownership contract around `SERVICE_STORAGE`/`SERVICE_NET`; implement real
    VT-d/AMD-Vi page-table programming and fault handling, then test that a
