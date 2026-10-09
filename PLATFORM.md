@@ -133,7 +133,10 @@ state and stacks lie below 128 MiB.
 
 ## Limits
 
-Storage still runs inside the kernel without IOMMU isolation, and only one
+Storage still runs inside the kernel without IOMMU isolation. The VirtIO path
+now crosses the versioned `storage_service.h` broker seam, which validates a
+single bounded request and owns its completion/cancel lifecycle; it is not yet
+a ring-3 service and does not transfer device ownership out of the kernel. Only one
 batch is in flight per caller. There are no PTYs, so full job-control terminal
 semantics are pending. `ITIMER_VIRTUAL` and `ITIMER_PROF` count wall-clock
 ticks rather than consumed CPU time. Task and page-table storage is fixed at

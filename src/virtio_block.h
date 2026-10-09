@@ -3,13 +3,19 @@
  * are submitted together with one notification; the caller sleeps until the
  * used ring reports every chain, so a 512 KiB request costs one wake-up.
  * Filesystem serialization owns the queue; early boot uses bounded polling. */
+#include "storage_service.h"
 static u16 virtio_port,virtio_queue_size,virtio_avail,virtio_used;
 static u64 virtio_sectors;
 static u32 virtio_features;
 static u32 virtio_device;
 static int virtio_ready,virtio_present;
 static int virtio_message_mode;
+static StorageIpcBroker virtio_storage_broker;
+static u32 virtio_storage_sequence;
 static u32 virtio_irq_line,virtio_slots;
+static int virtio_storage_dma_check(u64 address,u64 length,u32 permissions){
+    return dma_validate(virtio_device,DMA_DOMAIN_STORAGE,address,length,permissions);
+}
 static int virtio_waiter=-1;
 static u64 virtio_deadline;
 static u16 virtio_expected;
@@ -48,17 +54,22 @@ static void virtio_block_init(void){
             if(io_read16(virtio_port+22)==0xffff){pci_write16(address,pci_msix_cap+2,(pci_read(address,pci_msix_cap)>>16)&~0x8000);pci_write16(address,4,(pci_read(address,4)&0xffff)&~0x400);virtio_message_mode=0;}}
         u32 config=virtio_message_mode==2?24:20;
         virtio_sectors=io_read32(virtio_port+config)|((u64)io_read32(virtio_port+config+4)<<32);
-        outb(virtio_port+18,7);virtio_ready=1;
+        outb(virtio_port+18,7);storage_ipc_broker_init(&virtio_storage_broker,SERVICE_STORAGE,virtio_device,DMA_DOMAIN_STORAGE,virtio_sectors,SERVICE_CAP_STORAGE);virtio_ready=1;
         serial("VIRTIO: PCI block queue ready sectors=");hex(virtio_sectors);serial(" slots=");hex(virtio_slots);serial(virtio_message_mode==2?" MSI-X\r\n":virtio_message_mode?" MSI\r\n":" INTx\r\n");return;
     }
 }
 #include "virtio_completion.h"
 static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
     if(!virtio_ready||count>virtio_slots*VIRTIO_SLOT_SECTORS||sector>virtio_sectors||count>virtio_sectors-sector)return 0;
+    if(operation!=0&&operation!=1&&operation!=4)return 0;
     if(!dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_RING,0x4000,DMA_READ|DMA_WRITE) ||
        !dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_REQUESTS,0x1000,DMA_READ|DMA_WRITE) ||
        !dma_validate(virtio_device,DMA_DOMAIN_STORAGE,VIRTIO_BOUNCE,0x80000,DMA_READ|DMA_WRITE)) return 0;
     if(operation==4&&!(virtio_features&(1U<<9)))return 0;
+    if(++virtio_storage_sequence==0)++virtio_storage_sequence;
+    StorageIpcRequest ipc={STORAGE_IPC_VERSION,sizeof(StorageIpcRequest),operation==4?STORAGE_IPC_FLUSH:(operation==0?STORAGE_IPC_READ:STORAGE_IPC_WRITE),0,virtio_storage_sequence,SERVICE_STORAGE,virtio_device,DMA_DOMAIN_STORAGE,sector,count,count?(u64)VIRTIO_BOUNCE:0};
+    if(storage_ipc_submit(&virtio_storage_broker,&ipc,SERVICE_CAP_STORAGE,
+                          virtio_storage_dma_check)) return 0;
     VirtioDescriptor *desc=(VirtioDescriptor *)VIRTIO_RING;
     volatile u16 *avail=(volatile u16 *)(VIRTIO_RING+16*virtio_queue_size);
     volatile u16 *used=(volatile u16 *)((VIRTIO_RING+16*virtio_queue_size+6+2*virtio_queue_size+4095)&~4095ULL);
@@ -84,13 +95,14 @@ static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
         virtio_deadline=timer_ticks+3000+chains*50;
         while((u16)(used[1]-virtio_used)<chains&&virtio_ready){virtio_waiter=current_task;
             tasks[current_task].state=WAIT_IO;virtio_suspensions++;kernel_suspend();}
-        if(!virtio_ready)return 0;
+        if(!virtio_ready){storage_ipc_complete(&virtio_storage_broker,ipc.sequence,STORAGE_IPC_E_IO,0,0);return 0;}
     }else{
         u32 spins=100000000;while((u16)(used[1]-virtio_used)<chains&&--spins)__asm__ volatile("pause":::"memory");
-        if(!spins){outb(virtio_port+18,0);virtio_ready=0;return 0;}
+        if(!spins){outb(virtio_port+18,0);virtio_ready=0;storage_ipc_complete(&virtio_storage_broker,ipc.sequence,STORAGE_IPC_E_IO,0,0);return 0;}
     }
     __asm__ volatile("mfence":::"memory");virtio_used=used[1];(void)inb(virtio_port+19);
-    for(u32 i=0;i<chains;i++)if(*(volatile u8 *)(virtio_request(i)+16))return 0;
+    for(u32 i=0;i<chains;i++)if(*(volatile u8 *)(virtio_request(i)+16)){storage_ipc_complete(&virtio_storage_broker,ipc.sequence,STORAGE_IPC_E_IO,0,0);return 0;}
     if(operation==0)for(u32 i=0,done=0;i<chains;i++){u32 n=count-done;if(n>VIRTIO_SLOT_SECTORS)n=VIRTIO_SLOT_SECTORS;memcpy((u8 *)data+(u64)done*512,virtio_bounce(i),(u64)n*512);done+=n;}
+    storage_ipc_complete(&virtio_storage_broker,ipc.sequence,STORAGE_IPC_OK,(u64)count*512,0);
     return 1;
 }
