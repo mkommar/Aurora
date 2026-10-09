@@ -156,7 +156,9 @@ installation found on this computer. To choose another directory:
 The build separately compiles and links each user service, derives page
 permissions from its linker symbols, and embeds its flat image into the boot
 bundle. The kernel copies the services into distinct private memory at startup.
-The disk image is 16 MiB, and the loader accepts a bundle up to 300 KiB.
+Production disk images remain 16 MiB, and the loader accepts a bundle up to
+300 KiB. Self-test images are 32 MiB and place AuroraFS metadata at LBA 1024,
+after the 600-sector loader ceiling; production metadata remains at LBA 512.
 ELF files retain symbols for debugging. Generated files and tools are Git-ignored.
 
 ### Linux host
@@ -219,10 +221,10 @@ python test-smoke.py --nm 'C:\path\to\llvm\bin\llvm-nm.exe'
 For the deliberately gated malicious-DMA image, close the normal VM and run
 `python build-linux.py --self-test --dma-fault-test`, then run
 `python test-iommu-dma-fault.py --build-dir build/selftest`. This is a QEMU
-VirtIO negative test, not a claim about arbitrary PCI devices or physical
-hardware. On QEMU 8.2 the legacy/transitional VirtIO PCI model cannot enable
-`iommu_platform`, so the harness currently reports descriptor publication and
-the bounded fault wait without claiming a passing hardware negative. Intentional
+modern VirtIO block negative test, not a claim about arbitrary PCI devices or
+physical hardware. The driver discovers the VirtIO 1.x common, notify, and
+device PCI capabilities and enables `iommu_platform`; the harness requires the
+unauthorized transaction to fault and quarantine the source. Intentional
 DMA faults are present only in this self-test image.
 
 For the existing process fault-injection image, close the normal VM and run:

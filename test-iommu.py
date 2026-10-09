@@ -16,12 +16,10 @@ if not development.exists(): development.write_bytes(b'\0' * (16 * 1024 * 1024))
 with serial.open('w') as output:
     process = subprocess.Popen([
         args.qemu, '-machine', 'q35,accel=tcg', '-m', '128M',
-        '-device', 'intel-iommu,intremap=on', '-acpitable', f'file={dmar}',
+        '-device', 'intel-iommu,intremap=on,dma-translation=on', '-acpitable', f'file={dmar}',
         '-drive', f'format=raw,file={build / "aurora.img"}',
         '-drive', f'format=raw,file={development},if=none,id=development',
-        '-device', 'virtio-blk-pci,drive=development,disable-modern=on', '-display', 'none',
-        '-netdev', 'user,id=net0', '-device', 'virtio-net-pci,netdev=net0,disable-modern=on',
-        '-object', 'rng-builtin,id=rng0', '-device', 'virtio-rng-pci,rng=rng0,disable-modern=on',
+        '-device', 'virtio-blk-pci,drive=development,disable-legacy=on,iommu_platform=on', '-display', 'none',
         '-serial', f'file:{serial}', '-no-reboot'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 try:
     deadline = time.time() + 20

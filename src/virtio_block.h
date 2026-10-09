@@ -4,6 +4,7 @@
  * used ring reports every chain, so a 512 KiB request costs one wake-up.
  * Filesystem serialization owns the queue; early boot uses bounded polling. */
 #include "storage_service.h"
+#include "virtio_pci.h"
 static u16 virtio_port,virtio_queue_size,virtio_avail,virtio_used;
 static u64 virtio_sectors;
 static u32 virtio_features;
@@ -14,6 +15,15 @@ static StorageIpcBroker virtio_storage_broker;
 static StorageIpcService virtio_storage_service;
 static u32 virtio_storage_sequence;
 static u32 virtio_irq_line,virtio_slots;
+#define VIRTIO_RING 0x0d000000ULL
+#define VIRTIO_REQUESTS 0x0d004000ULL
+#define VIRTIO_BOUNCE 0x0d080000ULL
+#define VIRTIO_SLOTS 8
+#define VIRTIO_SLOT_SECTORS 128
+#define VIRTIO_MAX_SECTORS (VIRTIO_SLOTS*VIRTIO_SLOT_SECTORS)
+static int virtio_modern;
+static u64 virtio_common,virtio_notify,virtio_device_config;
+static u32 virtio_notify_multiplier;
 static int virtio_storage_dma_check(u64 address,u64 length,u32 permissions){
     return dma_validate(virtio_device,DMA_DOMAIN_STORAGE,address,length,permissions);
 }
@@ -26,18 +36,81 @@ static u16 io_read16(u16 port){u16 value;__asm__ volatile("inw %1,%0":"=a"(value
 static void io_write32(u16 port,u32 value){__asm__ volatile("outl %0,%1"::"a"(value),"Nd"(port));}
 static u32 pci_read(u32 address,u32 reg){io_write32(0xcf8,0x80000000U|address|reg);return io_read32(0xcfc);}
 #include "pci_irq.h"
+static u8 pci_config8(u32 address,u32 reg){return (u8)(pci_read(address,reg&~3U)>>((reg&3)*8));}
+static u64 virtio_bar(u32 address,u8 bar){
+    u32 low=pci_read(address,0x10+bar*4);
+    if(low&1)return 0;
+    u64 base=low&~15U;
+    if((low&6)==4){if(bar==5)return 0;base|=(u64)pci_read(address,0x14+bar*4)<<32;}
+    return base;
+}
+static u32 virtio_mmio32(u64 address,u32 offset){return *(volatile u32 *)(address+offset);}
+static u16 virtio_mmio16(u64 address,u32 offset){return *(volatile u16 *)(address+offset);}
+static void virtio_mmio32_write(u64 address,u32 offset,u32 value){*(volatile u32 *)(address+offset)=value;}
+static void virtio_mmio16_write(u64 address,u32 offset,u16 value){*(volatile u16 *)(address+offset)=value;}
+static void virtio_mmio64_write(u64 address,u32 offset,u64 value){*(volatile u64 *)(address+offset)=value;}
+static void virtio_modern_notify(void){
+    u16 offset=virtio_mmio16(virtio_common,0x1e);
+    *(volatile u16 *)(virtio_notify+(u64)offset*virtio_notify_multiplier)=0;
+}
+static int virtio_modern_capabilities(u32 device,VirtioPciCapability *common,
+                                      VirtioPciCapability *notify,VirtioPciCapability *config){
+    u8 cap=pci_config8(device,0x34);int found=0;
+    for(int hops=0;cap>=0x40&&cap<=0xfc&&hops<48;hops++){
+        u32 value=pci_read(device,cap);u8 id=value&255,next=(value>>8)&0xff;
+        if(id==9){
+            u32 header=pci_read(device,cap+4);VirtioPciCapability *out=0;u8 type=(value>>24)&0xff;
+            if(type==VIRTIO_PCI_CAP_COMMON)out=common;
+            if(type==VIRTIO_PCI_CAP_NOTIFY)out=notify;
+            if(type==VIRTIO_PCI_CAP_DEVICE)out=config;
+            if(out){out->type=type;out->bar=header&0xff;out->offset=pci_read(device,cap+8);out->length=pci_read(device,cap+12);out->notify_multiplier=0;
+                if(out->type==VIRTIO_PCI_CAP_NOTIFY)out->notify_multiplier=pci_read(device,cap+16);found++;}
+        }
+        if(next==cap)break;cap=next;
+    }
+    return found>=3 && virtio_pci_capabilities_complete(common,notify,config);
+}
+static int virtio_modern_block_init(u32 address){
+    VirtioPciCapability common={0},notify={0},config={0};
+    if(pci_read(address,0)!=0x10421af4 || !virtio_modern_capabilities(address,&common,&notify,&config))return 0;
+    u64 common_bar=virtio_bar(address,common.bar),notify_bar=virtio_bar(address,notify.bar),config_bar=virtio_bar(address,config.bar);
+    if(!common_bar||!notify_bar||!config_bar)return 0;
+    if(!dma_assign_device(address,DMA_DOMAIN_STORAGE))return 0;
+    virtio_device=address;virtio_common=common_bar+common.offset;virtio_notify=notify_bar+notify.offset;
+    virtio_device_config=config_bar+config.offset;virtio_notify_multiplier=notify.notify_multiplier;
+    *(volatile u8 *)(virtio_common+0x14)=0;*(volatile u8 *)(virtio_common+0x14)=1;*(volatile u8 *)(virtio_common+0x14)=3;
+    u64 device_features=(u64)virtio_mmio32(virtio_common,0x04);
+    virtio_mmio32_write(virtio_common,0x00,1);device_features|=(u64)virtio_mmio32(virtio_common,0x04)<<32;
+    if(!(device_features&(1ULL<<VIRTIO_F_VERSION_1))){*(volatile u8 *)(virtio_common+0x14)=0;return 0;}
+    /* ACCESS_PLATFORM is mandatory when QEMU routes this device through an
+     * IOMMU; keep the negotiated set otherwise limited to split-ring support. */
+    u64 driver_features=(1ULL<<VIRTIO_F_VERSION_1)|(1ULL<<33)|(device_features&(1ULL<<9));
+    virtio_mmio32_write(virtio_common,0x08,0);virtio_mmio32_write(virtio_common,0x0c,(u32)driver_features);
+    virtio_mmio32_write(virtio_common,0x08,1);virtio_mmio32_write(virtio_common,0x0c,(u32)(driver_features>>32));
+    *(volatile u8 *)(virtio_common+0x14)=0x0b;
+    if(!(*(volatile u8 *)(virtio_common+0x14)&0x08)){*(volatile u8 *)(virtio_common+0x14)=0;return 0;}
+    virtio_mmio16_write(virtio_common,0x16,0);virtio_queue_size=virtio_mmio16(virtio_common,0x18);
+    if(virtio_queue_size<3||virtio_queue_size>256){*(volatile u8 *)(virtio_common+0x14)=0;return 0;}
+    virtio_slots=virtio_queue_size/3;if(virtio_slots>VIRTIO_SLOTS)virtio_slots=VIRTIO_SLOTS;
+    memset((void *)VIRTIO_RING,0,16384);virtio_mmio64_write(virtio_common,0x20,VIRTIO_RING);
+    virtio_mmio64_write(virtio_common,0x28,VIRTIO_RING+16*virtio_queue_size);
+    virtio_mmio64_write(virtio_common,0x30,VIRTIO_RING+virtio_pci_queue_bytes(virtio_queue_size));
+    virtio_mmio16_write(virtio_common,0x1c,1);virtio_modern=1;virtio_message_mode=0;virtio_irq_line=0;
+    virtio_features=(u32)device_features;virtio_sectors=*(volatile u64 *)virtio_device_config;
+    *(volatile u8 *)(virtio_common+0x14)=0x0f;
+    storage_ipc_broker_init(&virtio_storage_broker,STORAGE_TASK,virtio_device,DMA_DOMAIN_STORAGE,virtio_sectors,SERVICE_CAP_STORAGE);
+    storage_ipc_service_start(&virtio_storage_service,&virtio_storage_broker,1,STORAGE_TASK,SERVICE_CAP_STORAGE);virtio_ready=1;
+    serial("VIRTIO: modern PCI block queue ready sectors=");hex(virtio_sectors);serial("\r\n");return 1;
+}
 typedef struct {u64 address;u32 length;u16 flags,next;} VirtioDescriptor;
 /* 0x0d000000-0x0d0fffff: ring (16 KiB), request headers/status, then eight
  * 64 KiB bounce slots ending where the development-volume cache begins. */
-#define VIRTIO_RING 0x0d000000ULL
-#define VIRTIO_REQUESTS 0x0d004000ULL
-#define VIRTIO_BOUNCE 0x0d080000ULL
-#define VIRTIO_SLOTS 8
-#define VIRTIO_SLOT_SECTORS 128
-#define VIRTIO_MAX_SECTORS (VIRTIO_SLOTS*VIRTIO_SLOT_SECTORS)
 static u64 virtio_request(u32 slot){return VIRTIO_REQUESTS+slot*32;}
 static u8 *virtio_bounce(u32 slot){return (u8 *)(VIRTIO_BOUNCE+(u64)slot*VIRTIO_SLOT_SECTORS*512);}
 static void virtio_block_init(void){
+    for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
+        u32 address=(bus<<16)|(slot<<11);if(virtio_modern_block_init(address))return;
+    }
     for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
         u32 address=(bus<<16)|(slot<<11);if(pci_read(address,0)!=0x10011af4)continue;
         if(!dma_assign_device(address,DMA_DOMAIN_STORAGE))continue;virtio_device=address;
@@ -85,7 +158,7 @@ static int virtio_malicious_dma_test(void) {
     __asm__ volatile("mfence" ::: "memory"); ++virtio_avail; avail[1] = virtio_avail;
     serial("IOMMU TEST: published descriptor=00000000 avail="); hex(virtio_avail);
     serial(" notify=00000000\r\n");
-    __asm__ volatile("mfence" ::: "memory"); outw(virtio_port + 16, 0);
+    __asm__ volatile("mfence" ::: "memory"); if(virtio_modern)virtio_modern_notify();else outw(virtio_port + 16, 0);
     (void)unauthorized;
     virtio_dma_test_pending = 1;
     return 1;
@@ -136,7 +209,7 @@ static int virtio_transfer(u64 sector,void *data,u32 count,int operation){
         avail[2+(virtio_avail+chains)%virtio_queue_size]=head;done+=n;
     }
     __asm__ volatile("mfence":::"memory");virtio_avail+=chains;avail[1]=virtio_avail;
-    __asm__ volatile("mfence":::"memory");outw(virtio_port+16,0);
+    __asm__ volatile("mfence":::"memory");if(virtio_modern)virtio_modern_notify();else outw(virtio_port+16,0);
     virtio_requests++;virtio_batched_requests+=chains;if(chains>1)virtio_batches++;if(chains>virtio_max_batch)virtio_max_batch=chains;
     if(kernel_started&&(virtio_message_mode||(virtio_irq_line>0&&virtio_irq_line<16))){
         virtio_expected=chains;

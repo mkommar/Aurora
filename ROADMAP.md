@@ -178,15 +178,14 @@ ABI alone does not count.
    the VirtIO block path with QEMU's Intel or AMD IOMMU model, while the paired
    fail-closed tests verify startup refusal without DMAR or IVRS. The
    `test-iommu-dma-fault.py` is a bounded negative harness: only the self-test
-   image accepts `--dma-fault-test`, and it publishes a real transitional
-   VirtIO descriptor whose data address is outside the storage second-level
+   image accepts `--dma-fault-test`, and it publishes a real modern VirtIO 1.x
+   PCI block descriptor whose data address is outside the storage second-level
    domain, then waits for the hardware fault latch with a bounded timeout. The
-   current QEMU 8.2 legacy/transitional VirtIO PCI model rejects
-   `iommu_platform=on`; without that modern-only transport property it does not
-   route the descriptor through the IOMMU, so the harness records publication
-   but does not claim a passing hardware negative. Completing this acceptance
-   test requires a modern VirtIO PCI transport in Aurora or a QEMU malicious
-   device fixture. The positive boot tests and no-DMAR/no-IVRS or malformed-table
+   modern transport is intentionally scoped to the block path used by this
+   test; network and entropy remain transitional. The current QEMU 8.2
+   validation reaches modern queue setup and descriptor publication but has not
+   yet produced the required fault marker, so this negative remains unvalidated.
+   The positive boot tests and no-DMAR/no-IVRS or malformed-table
    fail-closed tests remain separate. Interrupt remapping, arbitrary PCI
    functions, multi-device attacks, and physical hardware still require
    independent work and selected hardware must stay fail-closed.

@@ -1,18 +1,23 @@
-param([Parameter(Mandatory=$true)][string]$Image,[Parameter(Mandatory=$true)][hashtable]$Files)
+param([Parameter(Mandatory=$true)][string]$Image,[Parameter(Mandatory=$true)][hashtable]$Files,[switch]$SelfTest)
 $ErrorActionPreference = 'Stop'
 # Open exclusively before reading: refuse to modify a disk used by QEMU.
 $path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Image)
 $stream = [IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
 try {
-    if ($stream.Length -ne 16777216) { throw 'Expected a 16 MiB Aurora disk image.' }
-    $bytes = New-Object byte[] 16777216
+    $imageBytes = if ($SelfTest) { 32 * 1024 * 1024 } else { 16 * 1024 * 1024 }
+    $fsLba = if ($SelfTest) { 1024 } else { 512 }
+    if ($stream.Length -ne $imageBytes) { throw "Expected a $($imageBytes / 1MB) MiB Aurora disk image." }
+    if ($SelfTest -and $fsLba -le 600) { throw 'Filesystem metadata must follow the loader boundary.' }
+    $dataEnd = ($fsLba + 8 + 32 * 128) * 512
+    if ($dataEnd -gt $imageBytes) { throw 'Filesystem extents exceed the image boundary.' }
+    $bytes = New-Object byte[] $imageBytes
     $offset=0
     while ($offset -lt $bytes.Length) { $count=$stream.Read($bytes,$offset,$bytes.Length-$offset); if (!$count) { throw 'Short disk image read' }; $offset += $count }
     $magic = [Text.Encoding]::ASCII.GetBytes("AURFS01`0")
-    $base = 512*512
+    $base = $fsLba*512
     $existing = [Text.Encoding]::ASCII.GetString($bytes,$base,8)
     if ($existing -ne "AURFS01`0") {
-        for ($i=$base;$i -lt (520+32*128)*512;$i++) { if ($bytes[$i] -ne 0) { throw 'Unknown filesystem; refusing to overwrite it.' } }
+        for ($i=$base;$i -lt $dataEnd;$i++) { if ($bytes[$i] -ne 0) { throw 'Unknown filesystem; refusing to overwrite it.' } }
         $magic.CopyTo($bytes,$base)
     }
     foreach ($name in $Files.Keys) {
@@ -21,7 +26,7 @@ try {
         if ($data.Length -gt 65536) { throw "File exceeds 64 KiB: $name" }
         $slot=-1; $empty=-1
         for ($i=0;$i -lt 32;$i++) {
-            $entry=513*512+$i*64
+            $entry=($fsLba+1)*512+$i*64
             $used=[BitConverter]::ToUInt32($bytes,$entry+36)
             $size=[BitConverter]::ToUInt32($bytes,$entry+32)
             if ($used -gt 1 -or $size -gt 65536) { throw 'Invalid filesystem metadata' }
@@ -31,12 +36,13 @@ try {
         }
         if ($slot -lt 0) { $slot=$empty }
         if ($slot -lt 0) { throw 'Filesystem directory is full.' }
-        $entry=513*512+$slot*64
+        $entry=($fsLba+1)*512+$slot*64
         [Array]::Clear($bytes,$entry,64)
         [Text.Encoding]::ASCII.GetBytes($name).CopyTo($bytes,$entry)
         [BitConverter]::GetBytes([uint32]$data.Length).CopyTo($bytes,$entry+32)
         [BitConverter]::GetBytes([uint32]1).CopyTo($bytes,$entry+36)
-        $dataOffset=(520+$slot*128)*512
+        $dataOffset=($fsLba+8+$slot*128)*512
+        if ($dataOffset + 65536 -gt $imageBytes) { throw 'Filesystem file extent exceeds image boundary.' }
         [Array]::Clear($bytes,$dataOffset,65536)
         $data.CopyTo($bytes,$dataOffset)
     }

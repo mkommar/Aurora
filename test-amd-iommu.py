@@ -15,7 +15,7 @@ with serial.open('w'):
         args.qemu, '-machine', 'q35,accel=tcg', '-m', '128M', '-device', 'amd-iommu,pt=off',
         '-acpitable', f'file={ivrs}', '-drive', f'format=raw,file={build / "aurora.img"}',
         '-drive', f'format=raw,file={development},if=none,id=development',
-        '-device', 'virtio-blk-pci,drive=development,disable-modern=on', '-display', 'none',
+        '-device', 'virtio-blk-pci,drive=development,disable-legacy=on,iommu_platform=on', '-display', 'none',
         '-serial', f'file:{serial}', '-no-reboot'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 try:
     deadline = time.time() + 20

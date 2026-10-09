@@ -10,3 +10,6 @@ binary = out / "storage-service-host"
 subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I.",
                 "tests/storage-service-host.c", "-o", str(binary)], check=True)
 subprocess.run([str(binary)], check=True)
+subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-I.",
+                "tests/virtio-pci-host.c", "-o", str(out / "virtio-pci-host")], check=True)
+subprocess.run([str(out / "virtio-pci-host")], check=True)

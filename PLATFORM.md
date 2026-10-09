@@ -144,12 +144,15 @@ stock SeaBIOS used by QEMU 8.2 does not publish one. The paired AMD harness
 uses `amd-iommu,pt=off`, injects IVRS at QEMU's `0xfed80000` AMD-Vi BAR, and
 checks explicit VirtIO source IDs. The fail-closed tests verify that a
 guest without DMAR or IVRS, or with a malformed table, refuses DMA-backed
-startup. The gated `test-iommu-dma-fault.py` negative run submits an actual
-unauthorized VirtIO data descriptor and waits for the QEMU IOMMU to record and
-latch the fault before quarantining the device. QEMU 8.2's current
-legacy/transitional VirtIO PCI model does not expose `iommu_platform=on`, so
-the harness currently provides publication/timeout evidence rather than a
-passing hardware negative. The VirtIO path now crosses the
+startup. The gated `test-iommu-dma-fault.py` negative run uses the modern
+ VirtIO 1.x PCI block transport with `iommu_platform=on`, submits an actual
+ unauthorized data descriptor, and requires the QEMU IOMMU to record and latch
+ the fault before quarantining the device. The modern path is scoped to the
+ block device used by this test; network and entropy retain their transitional
+ paths. The harness currently reaches modern queue setup and descriptor
+ publication, but the available QEMU 8.2 run did not produce the required
+ hardware fault marker for the unauthorized descriptor, so the negative result
+ remains unvalidated. The VirtIO path now crosses the
 versioned `storage_service.h` broker seam, which validates a
 single bounded request and owns its completion/cancel lifecycle; it is not yet
 a ring-3 service and does not transfer device ownership out of the kernel. Only one

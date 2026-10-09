@@ -73,8 +73,11 @@ if ($kernel.Length -gt 307200) { throw 'Kernel + service bundle exceeds loader l
 $imagePath = "$PSScriptRoot/$output/aurora.img"
 # Preserve filesystem contents across kernel builds. File sharing rejects a
 # running QEMU instance rather than corrupting its disk.
-$image = if (Test-Path $imagePath) { [IO.File]::ReadAllBytes($imagePath) } else { New-Object byte[] (16 * 1024 * 1024) }
-if ($image.Length -ne 16777216) { throw 'Existing disk image is not 16 MiB.' }
+$imageBytes = if ($SelfTest) { 32 * 1024 * 1024 } else { 16 * 1024 * 1024 }
+$fsLba = if ($SelfTest) { 1024 } else { 512 }
+$image = if (Test-Path $imagePath) { [IO.File]::ReadAllBytes($imagePath) } else { New-Object byte[] $imageBytes }
+if ($image.Length -ne $imageBytes) { throw "Existing disk image is not $($imageBytes / 1MB) MiB." }
+if (4608 + $kernel.Length -gt $fsLba * 512) { throw 'Kernel bundle overlaps the filesystem metadata layout.' }
 [Array]::Clear($image,0,512*512)
 [IO.File]::ReadAllBytes("$PSScriptRoot/$output/boot.bin").CopyTo($image, 0)
 [IO.File]::ReadAllBytes("$PSScriptRoot/$output/loader.bin").CopyTo($image, 512)
@@ -86,5 +89,5 @@ foreach ($appName in @('hello','calc','filedemo')) {
     $appFiles[$appName] = "$output/apps/$appName.elf"
 }
 $appFiles['readme.txt'] = 'apps/readme.txt'
-& "$PSScriptRoot/pack-files.ps1" -Image "$output/aurora.img" -Files $appFiles
+& "$PSScriptRoot/pack-files.ps1" -Image "$output/aurora.img" -Files $appFiles -SelfTest:$SelfTest
 Write-Host "Built Aurora microkernel + user services: $($kernel.Length) bytes, $output/aurora.img"
