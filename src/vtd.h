@@ -5,7 +5,7 @@
 #define VTD_DMAR_DRHD 0
 #define VTD_DRHD_INCLUDE_ALL 1
 #define VTD_CONTEXT_PRESENT 1ULL
-#define VTD_CONTEXT_TRANSLATE (1ULL << 2)
+#define VTD_CONTEXT_TRANSLATE 0ULL
 #define VTD_CONTEXT_AW_4LEVEL 2ULL
 #define VTD_READ 1ULL
 #define VTD_WRITE 2ULL
@@ -45,13 +45,12 @@ static VTD_UNUSED int vtd_parse_dmar(const u8 *table, u32 length, VtdUnit *unit)
     return 0;
 }
 
-static VTD_UNUSED u64 vtd_context_entry(u16 domain_id) {
-    return VTD_CONTEXT_PRESENT | VTD_CONTEXT_TRANSLATE |
-           ((u64)domain_id << 8);
+static VTD_UNUSED u64 vtd_context_entry(u64 second_level) {
+    return (second_level & ~0xfffULL) | VTD_CONTEXT_PRESENT | VTD_CONTEXT_TRANSLATE;
 }
 
-static VTD_UNUSED u64 vtd_context_attributes(u64 second_level) {
-    return (second_level & ~0xfffULL) | VTD_CONTEXT_AW_4LEVEL;
+static VTD_UNUSED u64 vtd_context_attributes(u16 domain_id) {
+    return VTD_CONTEXT_AW_4LEVEL | ((u64)domain_id << 8);
 }
 
 static VTD_UNUSED u64 vtd_leaf_entry(u64 physical, u32 permissions) {

@@ -16,7 +16,7 @@ if not development.exists(): development.write_bytes(b'\0' * (16 * 1024 * 1024))
 with serial.open('w') as output:
     process = subprocess.Popen([
         args.qemu, '-machine', 'q35,accel=tcg', '-m', '128M',
-        '-device', 'intel-iommu,intremap=on,dma-translation=on', '-acpitable', f'file={dmar}',
+        '-device', 'intel-iommu,intremap=on,dma-translation=on,aw-bits=48', '-acpitable', f'file={dmar}',
         '-drive', f'format=raw,file={build / "aurora.img"}',
         '-drive', f'format=raw,file={development},if=none,id=development',
         '-device', 'virtio-blk-pci,drive=development,disable-legacy=on,iommu_platform=on', '-display', 'none',
@@ -29,7 +29,8 @@ try:
         time.sleep(.1)
     text = serial.read_text(errors='replace')
     assert 'IOMMU: Intel VT-d enabled' in text, text[-4000:]
-    assert 'VIRTIO: PCI block queue ready' in text, text[-4000:]
+    assert ('VIRTIO: PCI block queue ready' in text or
+            'VIRTIO: modern PCI block queue ready' in text), text[-4000:]
     assert 'KERNEL PANIC' not in text, text[-4000:]
     print('PASS: QEMU Intel VT-d discovery, translation enable and VirtIO boot')
 finally:

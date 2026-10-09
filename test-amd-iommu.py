@@ -25,7 +25,8 @@ try:
         time.sleep(.1)
     text = serial.read_text(errors='replace')
     assert 'IOMMU: AMD-Vi enabled' in text, text[-4000:]
-    assert 'VIRTIO: PCI block queue ready' in text, text[-4000:]
+    assert ('VIRTIO: PCI block queue ready' in text or
+            'VIRTIO: modern PCI block queue ready' in text), text[-4000:]
     assert 'KERNEL PANIC' not in text, text[-4000:]
     print('PASS: QEMU AMD-Vi IVRS discovery, translation enable and VirtIO boot')
 finally:

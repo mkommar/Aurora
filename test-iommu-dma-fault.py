@@ -17,6 +17,10 @@ parser.add_argument('--build-dir', default='build/selftest')
 parser.add_argument('--backend', choices=['intel', 'amd', 'both'], default='both')
 args = parser.parse_args()
 build = Path(args.build_dir)
+markers = {
+    'blocked': 'IOMMU TEST: unauthorized VirtIO DMA blocked; fault latched; device quarantined',
+    'stale': 'IOMMU TEST: stale completion rejected after quarantine',
+}
 
 def run(backend):
     serial = build / f'{backend}-dma-fault-serial.log'
@@ -24,7 +28,7 @@ def run(backend):
     development = build / f'{backend}-dma-fault-development.img'
     if backend == 'intel':
         write_dmar(table)
-        iommu = ['-device', 'intel-iommu,intremap=on,dma-translation=on', '-acpitable', f'file={table}']
+        iommu = ['-device', 'intel-iommu,intremap=on,dma-translation=on,aw-bits=48', '-acpitable', f'file={table}']
     else:
         write_ivrs(table)
         iommu = ['-device', 'amd-iommu,pt=off', '-acpitable', f'file={table}']
@@ -41,18 +45,22 @@ def run(backend):
         deadline = time.time() + 20
         while time.time() < deadline:
             text = serial.read_text(errors='replace') if serial.exists() else ''
-            if 'IOMMU TEST:' in text or 'KERNEL PANIC' in text:
+            if markers['blocked'] in text or markers['stale'] in text or 'KERNEL PANIC' in text:
                 break
             time.sleep(.1)
         text = serial.read_text(errors='replace')
         expected = f'IOMMU: {"AMD-Vi" if backend == "amd" else "Intel VT-d"} enabled'
-        marker = 'IOMMU TEST: unauthorized VirtIO DMA blocked; fault latched; device quarantined'
+        marker = markers['blocked']
         if expected not in text:
             print(f'BLOCKED: QEMU {backend} did not boot the expected IOMMU backend')
             print(text[-4000:])
             return False
         if marker not in text:
             print(f'BLOCKED: QEMU {backend} did not latch the injected DMA fault')
+            print(text[-4000:])
+            return False
+        if markers['stale'] not in text:
+            print(f'BLOCKED: QEMU {backend} did not reject a stale completion after quarantine')
             print(text[-4000:])
             return False
         if 'KERNEL PANIC' in text:
