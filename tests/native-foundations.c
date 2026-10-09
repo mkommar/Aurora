@@ -14,6 +14,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #define CHECK(x) do { if (!(x)) { printf("FAIL line %d: %s errno=%d\n",__LINE__,#x,errno); return 1; } } while(0)
 static volatile sig_atomic_t handled;
 static void handler(int signal){handled=signal;}
@@ -50,6 +51,17 @@ int main(int argc,char **argv) {
     }
     int fd=open("/work/fd-test",O_CREAT|O_TRUNC|O_RDWR,0600);
     CHECK(fd>=0); CHECK(write(fd,"abcdef",6)==6); CHECK(lseek(fd,0,SEEK_SET)==0);
+    DIR *proc=opendir("/proc");CHECK(proc!=0);int saw_self=0,saw_pid=0;struct dirent *dent;
+    char self_name[32];snprintf(self_name,sizeof(self_name),"%d",(int)getpid());
+    while((dent=readdir(proc))){if(!strcmp(dent->d_name,"self"))saw_self=1;if(!strcmp(dent->d_name,self_name))saw_pid=1;}CHECK(closedir(proc)==0&&saw_self&&saw_pid);
+    char proc_status[2048];fd=open("/proc/self/status",O_RDONLY);CHECK(fd>=0);ssize_t status_size=read(fd,proc_status,sizeof(proc_status)-1);CHECK(status_size>0);proc_status[status_size]=0;close(fd);
+    CHECK(strstr(proc_status,"Name:\t")&&strstr(proc_status,"Pid:\t")&&strstr(proc_status,self_name));
+    fd=open("/proc/self/cmdline",O_RDONLY);CHECK(fd>=0);char cmdline[256];CHECK(read(fd,cmdline,sizeof(cmdline))>1);close(fd);
+    fd=open("/proc/uptime",O_RDONLY);CHECK(fd>=0);char uptime[128];CHECK(read(fd,uptime,sizeof(uptime))>0);close(fd);
+    fd=open("/proc/meminfo",O_RDONLY);CHECK(fd>=0);char meminfo[512];CHECK(read(fd,meminfo,sizeof(meminfo))>0);close(fd);
+    CHECK(open("/proc/999999/status",O_RDONLY)==-1&&errno==ENOENT);
+    puts("PASS kernel-backed proc visibility, self, status, cmdline, dynamic files and invalid pid");
+    fd=open("/work/fd-test",O_RDWR);CHECK(fd>=0);
     int alias=dup(fd); char c=0; CHECK(alias>=0);
     CHECK(read(fd,&c,1)==1 && c=='a'); CHECK(read(alias,&c,1)==1 && c=='b');
     CHECK(fcntl(alias,F_SETFD,FD_CLOEXEC)==0); CHECK(fcntl(fd,F_GETFD)==0);

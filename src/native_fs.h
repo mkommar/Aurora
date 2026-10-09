@@ -39,6 +39,13 @@ static i64 native_device_read(int device,u64 offset,void *buffer,u64 count){
     return count;
 }
 static int native_path(char *,const char *,const char *);
+static int proc_path(const char *path);
+static int proc_find(const char *path);
+static int proc_is_entry(int index);
+static i64 proc_read(int index,u64 offset,void *buffer,u64 count);
+static i64 proc_getdents(int index,u64 *offset,void *buffer,u64 count);
+static i64 proc_stat(int index,u8 *out);
+static i64 proc_readlink(int index,void *buffer,u64 count);
 /* This short (no FAT alias) component is reserved at every path depth.
  * Ignore FAT case and trailing dot/space variants before comparing. */
 static int recovery_component(const char *name,u32 length){
@@ -137,8 +144,9 @@ static int native_path(char *out,const char *cwd,const char *input){
     }out[length]=0;return 1;
 }
 /* Paths served by a backend other than the ext2 volume skip symlink resolution. */
-static int native_foreign(const char *path){return (fat_ready&&fat_path(path))||aurorafs_path(path);}
+static int native_foreign(const char *path){return proc_path(path)||(fat_ready&&fat_path(path))||aurorafs_path(path);}
 static int native_find(const char *path){
+    int proc=proc_find(path);if(proc>=0)return proc;if(proc==-2)return -2;
     if(!native_ready&&!aurorafs_path(path))return -1;char resolved[256];
     if(ext2_ready&&!native_foreign(path)){int error=ext2_resolve(resolved,path,1);if(error)return error;path=resolved;}
     for(u32 i=0;i<native_count;i++)if(NFILES[i].kind&&ns_equal(NFILES[i].path,path))return (int)i;
@@ -155,6 +163,7 @@ static int native_commit(int index){
     return native_disk(0,native_sector,1);
 }
 static i64 native_read(int index,u64 offset,void *buffer,u64 count){
+    if(proc_is_entry(index))return proc_read(index,offset,buffer,count);
     if(aurorafs_path(NFILES[index].path))return aurorafs_io(index,offset,buffer,count,0);
     if(fat_ready&&fat_path(NFILES[index].path))return fat_io(index,offset,buffer,count,0);
     if(ext2_ready)return ext2_io(index,offset,buffer,count,0);
@@ -165,7 +174,7 @@ static i64 native_read(int index,u64 offset,void *buffer,u64 count){
         else {if(!native_disk(f->sector+pos/512,native_sector,0))return -5;memcpy((u8 *)buffer+done,native_sector+(pos&511),n);}done+=n;
     }return count;
 }
-static int native_writable(const char *p){return ext2_ready||aurorafs_path(p)||(p[0]=='/'&&p[1]=='t'&&p[2]=='m'&&p[3]=='p'&&p[4]=='/')||(p[0]=='/'&&p[1]=='w'&&p[2]=='o'&&p[3]=='r'&&p[4]=='k'&&p[5]=='/');}
+static int native_writable(const char *p){return proc_find(p)==-1&& (ext2_ready||aurorafs_path(p)||(p[0]=='/'&&p[1]=='t'&&p[2]=='m'&&p[3]=='p'&&p[4]=='/')||(p[0]=='/'&&p[1]=='w'&&p[2]=='o'&&p[3]=='r'&&p[4]=='k'&&p[5]=='/'));}
 static int native_create(const char *path){
     if(aurorafs_path(path))return aurorafs_create(path);
     if(fat_ready&&fat_path(path))return fat_create(path);
