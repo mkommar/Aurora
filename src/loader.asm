@@ -1,7 +1,7 @@
 bits 16
 org 0x8000
     mov [drive], dl
-    mov byte [chunks], 4
+    mov byte [chunks], 5
 .load:
     mov word [dap+2], 120
     mov si, dap

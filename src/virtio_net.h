@@ -62,7 +62,8 @@ static void net_reclaim_tx(void){
 int aurora_net_transmit(const void *packet,unsigned length){
     if(!net_ready||!entropy_ready||length>1518||length<14 ||
        !dma_validate(net_device,DMA_DOMAIN_NET,NET_TX_RING,0x10000,DMA_READ|DMA_WRITE) ||
-       !dma_validate(net_device,DMA_DOMAIN_NET,NET_TX_DATA,0x80000,DMA_READ|DMA_WRITE))return 0;net_reclaim_tx();if(!net_ready)return 0;
+       !dma_validate(net_device,DMA_DOMAIN_NET,NET_TX_DATA,0x80000,DMA_READ|DMA_WRITE))return 0;
+    net_reclaim_tx();if(!net_ready)return 0;
     u32 id;for(id=0;id<net_tx_size&&net_tx_busy[id];id++){}if(id==net_tx_size)return 0;
     u8 *buffer=(void *)(NET_TX_DATA+id*NET_BUFFER);memset(buffer,0,10);memcpy(buffer+10,packet,length);
     VirtioDescriptor *d=(void *)NET_TX_RING;d[id]=(VirtioDescriptor){(u64)buffer,length+10,0,0};net_tx_busy[id]=1;

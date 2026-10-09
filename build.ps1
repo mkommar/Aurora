@@ -21,14 +21,16 @@ Invoke-Checked $nasm @('-f','elf64','src/entry.asm','-o',"$output/entry.o")
 Invoke-Checked $nasm @('-f','elf64','src/traps.asm','-o',"$output/traps.o")
 Invoke-Checked $nasm @('-f','elf64','src/user/start.asm','-o',"$output/user-start.o")
 Invoke-Checked "$LlvmBin/clang.exe" ($flags + @('-c','src/user/lib.c','-o',"$output/user-lib.o"))
-$services = @('desktop','input','display')
+$services = @('desktop','input','display','storage')
 if ($SelfTest) { $services += 'probe' }
+$serviceFlags = @()
+if ($SelfTest) { $serviceFlags += '-DAURORA_SELF_TEST=1' }
 Invoke-Checked $nasm @('-f','bin','src/ap_start.asm','-o',"$output/ap-start.bin")
 $header = @('/* Generated from the separately linked user binaries. */')
 $bundle = @('bits 64','section .rodata.images','global ap_start_image,ap_start_end','ap_start_image:',"incbin `"$output/ap-start.bin`"",'ap_start_end:')
 foreach ($service in $services) {
     # Services are bundled into the kernel image; size matters more than speed.
-    Invoke-Checked "$LlvmBin/clang.exe" ($flags + @('-Os','-c',"src/user/$service.c",'-o',"$output/$service.o"))
+    Invoke-Checked "$LlvmBin/clang.exe" ($flags + $serviceFlags + @('-Os','-c',"src/user/$service.c",'-o',"$output/$service.o"))
     Invoke-Checked "$LlvmBin/ld.lld.exe" @('-nostdlib','-T','src/user/linker.ld',"$output/user-start.o", "$output/$service.o", "$output/user-lib.o",'-o',"$output/$service.elf")
     Invoke-Checked "$LlvmBin/llvm-objcopy.exe" @('-O','binary',"$output/$service.elf", "$output/$service.bin")
     $symbols = & "$LlvmBin/llvm-nm.exe" -n "$output/$service.elf"
@@ -50,6 +52,8 @@ foreach ($service in $services) {
     if ($service -eq 'probe') {
         $moduleDirectory = "$output/modules"
         New-Item -ItemType Directory -Force $moduleDirectory | Out-Null
+        $probeSize = (Get-Item "$output/probe.bin").Length
+        if ([int64]$moduleRoEnd -gt $probeSize) { $moduleRoEnd = [string]$probeSize }
         Invoke-Checked 'python.exe' @('tools/module-format.py','create','--input',"$output/probe.bin",'--output',"$moduleDirectory/probe.mod",'--entry','0','--text-end',$moduleTextEnd,'--ro-end',$moduleRoEnd)
     }
 }
@@ -64,7 +68,7 @@ Invoke-Checked "$LlvmBin/clang.exe" ($kernelFlags + @('-c','src/kernel.c','-o',"
 Invoke-Checked "$LlvmBin/ld.lld.exe" (@('-nostdlib','--gc-sections','-T','src/linker.ld',"$output/entry.o", "$output/traps.o", "$output/kernel.o", "$output/images.o") + $fsObjects + $netObjects + @('-o',"$output/kernel.elf"))
 Invoke-Checked "$LlvmBin/llvm-objcopy.exe" @('-O','binary',"$output/kernel.elf", "$output/kernel.bin")
 $kernel = [IO.File]::ReadAllBytes("$PSScriptRoot/$output/kernel.bin")
-if ($kernel.Length -gt 245760) { throw 'Kernel + service bundle exceeds loader limit of 480 sectors.' }
+if ($kernel.Length -gt 307200) { throw 'Kernel + service bundle exceeds loader limit of 600 sectors.' }
 $imagePath = "$PSScriptRoot/$output/aurora.img"
 # Preserve filesystem contents across kernel builds. File sharing rejects a
 # running QEMU instance rather than corrupting its disk.

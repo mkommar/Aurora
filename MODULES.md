@@ -29,21 +29,25 @@ permissions, service restart/timeout handling, and an IPC endpoint grant.
 
 ## Storage-service boundary
 
-The storage IPC header now includes a host/fixture service boundary. A service
-must start with the broker's current generation, registered owner, and granted
-storage capability before it can dispatch a request. The broker validates
-device ownership, DMA-domain identity, request ranges and permissions, and
-single-flight sequencing. Quiesce cancels the outstanding request; handoff
-requires a newer generation, invokes DMA revocation before admitting the
-replacement, and rejects completions from the old generation. This is a
-lifecycle and ABI regression boundary, not proof that an AURMOD1 payload has
-entered ring 3 inside Aurora.
+The built-in storage service is now compiled and bundled as a candidate ring-3 task by
+the normal build. It reaches `SYS_STORAGE` only from the storage task slot;
+the kernel validates the service capability, device/DMA domain, request ranges
+and single-flight sequencing before invoking the existing VirtIO path. A
+service fault or exit is contained by the normal user-fault path. The
+supervisor quiesces the old broker, revokes software DMA mappings, requires a
+new generation, creates a fresh CR3/task, and rejects old completions.
 
-The kernel still lacks dynamic page-table construction and a safe entry/exit
-path for an activated module's storage endpoint. VirtIO descriptors, DMA
-mappings, and device ownership therefore remain supervisor-owned. A future
-guest implementation must connect this contract to the existing process model
-without allowing module metadata to grant capabilities.
+The host/build boundary and fault/restart hooks are implemented, but the
+current QEMU self-test stops at the first task-return `iretq` with an invalid
+user frame, before service startup. Guest execution and crash/restart
+containment are therefore not yet validated. This is not arbitrary AURMOD1
+payload entry. AURMOD1 remains a validated,
+guarded activation format; dynamic module page-table creation and endpoint
+assignment are still future work.
+
+VirtIO descriptors, DMA mappings, and device ownership remain supervisor-owned.
+The storage task receives only a bounded syscall and a narrow shared DMA window;
+it cannot execute device port I/O or access another task's private pages.
 
 ## Hardware boundaries
 

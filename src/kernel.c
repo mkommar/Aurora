@@ -1,5 +1,5 @@
 /* Aurora microkernel: address spaces, traps, scheduling, IPC and capabilities.
- * Desktop/input/display run in ring 3; storage remains a kernel compatibility path. */
+ * Desktop/input/display/storage run in ring 3; device ownership remains in the kernel. */
 #include "abi.h"
 #include "images.h"
 #include "network_api.h"
@@ -19,7 +19,7 @@ static int radeon_flr, radeon_irq_cap;
 #ifdef AURORA_SELF_TEST
 #define APP_FIRST 10
 #else
-#define APP_FIRST 3
+#define APP_FIRST 4
 #endif
 #define TASK_COUNT TASK_LIMIT
 #define QUEUE_SIZE 32
@@ -71,6 +71,8 @@ static u64 kernel_stack(u32 id){return id<LEGACY_TASKS?0x100000ULL+(id+1)*0x1000
 static void *native_buffer(u32 id,u64 address,u64 size,int write);
 static int native_signal_deliver(u32 id);
 static void native_finish(u32 id,i64 code);
+static void storage_service_fault(i64 code);
+static void storage_service_reap(void);
 static void native_timers(void);
 static void native_wake_waiters(void);
 static void net_poll(void);
@@ -88,7 +90,7 @@ static int dma_bootstrap(void) {
            dma_map(storage,0x0d004000ULL,0x1000,DMA_READ|DMA_WRITE) &&
            dma_map(storage,0x0d080000ULL,0x80000,DMA_READ|DMA_WRITE) &&
            dma_map(net,0x0e100000ULL,0x20000,DMA_READ|DMA_WRITE) &&
-           dma_map(net,0x0e120000ULL,0x100000,DMA_READ|DMA_WRITE) &&
+           dma_map(net,0x0e120000ULL,0x80000,DMA_READ|DMA_WRITE) &&
            dma_map(net,0x0e1a0000ULL,0x80000,DMA_READ|DMA_WRITE) &&
            dma_map(entropy,0x0e300000ULL,0x4000,DMA_READ|DMA_WRITE) &&
            dma_map(entropy,0x0e304000ULL,0x1000,DMA_READ|DMA_WRITE);
@@ -163,6 +165,7 @@ static void tables_init(u32 index) {
 static void create_task(u32 id,const u8 *image,u64 size,u64 text_end,u64 ro_end,u64 framebuffer) {
     memset(&tasks[id],0,sizeof(Task));
     native_active[id]=0;task_affinity[id]=1;task_fsbase[id]=task_gsbase[id]=0;memcpy(task_fp[id],initial_fp,512);
+    task_faults[id]=0;task_fault_addresses[id]=0;exit_codes[id]=0;
     u64 root=0x200000+(u64)id*0x10000;task_cr3[id]=root;
     memset((void *)root,0,0x10000);
     u64 *pml4=(u64 *)root,*pdpt=(u64 *)(root+0x1000),*pd=(u64 *)(root+0x2000);
@@ -197,6 +200,8 @@ static void create_task(u32 id,const u8 *image,u64 size,u64 text_end,u64 ro_end,
         u64 first=framebuffer/0x200000,last=(framebuffer+SURFACE_BYTES-1)/0x200000;
         for(u64 i=first;i<=last;i++)pd[i]=i*0x200000|PRESENT|WRITE|USER|HUGE|NX;
     }
+    if(id==STORAGE_TASK)
+        pd[0x0d000000/0x200000]=0x0d000000ULL|PRESENT|USER|HUGE|NX;
     memset((void *)physical(id),0,USER_SIZE);memcpy((void *)physical(id),image,size);
     BootInfo *boot=(BootInfo *)(physical(id)+BOOT_ADDRESS-USER_BASE);
     boot->id=id;
@@ -280,6 +285,38 @@ static void filesystem_leave(void){
 }
 #include "native.h"
 #include "radeon.h"
+static int storage_restart_pending;
+static int storage_dma_revoke(u32 domain) { return dma_revoke(domain); }
+static void storage_service_fault(i64 code) {
+    if (current_task != STORAGE_TASK) return;
+    virtio_storage_service.active = 0;
+    storage_ipc_quiesce(&virtio_storage_broker);
+    storage_restart_pending = 1;
+    serial("STORAGE: contained service exit code=");hex((u64)code);serial("\r\n");
+}
+static void storage_service_reap(void) {
+    u32 generation;
+    if (!storage_restart_pending || !virtio_ready || tasks[STORAGE_TASK].state != DEAD) return;
+    generation = virtio_storage_broker.generation + 1;
+    if (!generation || storage_ipc_handoff(&virtio_storage_broker,generation,STORAGE_TASK,
+                                           virtio_device,DMA_DOMAIN_STORAGE,virtio_sectors,
+                                           SERVICE_CAP_STORAGE,storage_dma_revoke) != STORAGE_IPC_OK) {
+        virtio_ready = 0;
+        serial("STORAGE: restart handoff rejected\r\n");
+        return;
+    }
+    if (!dma_map(DMA_DOMAIN_STORAGE,VIRTIO_RING,0x4000,DMA_READ|DMA_WRITE) ||
+        !dma_map(DMA_DOMAIN_STORAGE,VIRTIO_REQUESTS,0x1000,DMA_READ|DMA_WRITE) ||
+        !dma_map(DMA_DOMAIN_STORAGE,VIRTIO_BOUNCE,0x80000,DMA_READ|DMA_WRITE)) {
+        virtio_ready = 0; storage_ipc_quiesce(&virtio_storage_broker);
+        serial("STORAGE: restart DMA remap rejected\r\n");return;
+    }
+    storage_ipc_service_start(&virtio_storage_service,&virtio_storage_broker,generation,
+                              STORAGE_TASK,SERVICE_CAP_STORAGE);
+    create_task(STORAGE_TASK,storage_image,storage_image_size,STORAGE_TEXT_END,STORAGE_RO_END,0);
+    storage_restart_pending = 0;
+    serial("STORAGE: ring3 service restarted generation=");hex(generation);serial("\r\n");
+}
 Frame *final_context(Frame *frame){
     /* A syscall may select its own task on an otherwise idle AP. Deliver
        pending signals after releasing the filesystem mutex, before IRET. */
@@ -312,7 +349,7 @@ Frame *trap_dispatch(Frame *frame) {
     if(!service_fast)compatibility_enter();
     if(t->state==DEAD||t->state==STOPPED)return schedule();
     if(frame->vector==62){cpu_rendezvous[cpu_local()->index]++;if(local_apic)local_apic[0xb0/4]=0;return schedule();}
-    if(frame->vector==32) { timer_ticks++;for(u32 i=1;i<cpu_count;i++)if(cpus[i].online)cpu_ipi(cpus[i].apic_id,62);virtio_timeout();ata_timeout();task_preemptions[current_task]++;outb(0x20,0x20);return schedule(); }
+    if(frame->vector==32) { timer_ticks++;for(u32 i=1;i<cpu_count;i++)if(cpus[i].online)cpu_ipi(cpus[i].apic_id,62);virtio_timeout();ata_timeout();task_preemptions[current_task]++;storage_service_reap();outb(0x20,0x20);return schedule(); }
     if(frame->vector>=33&&frame->vector<48){virtio_interrupt(frame->vector-32);net_interrupt(frame->vector-32);ata_interrupt(frame->vector-32);if(frame->vector>=40)outb(0xa0,0x20);outb(0x20,0x20);return schedule();}
     if(frame->vector>=48&&frame->vector<64){if(frame->vector!=63){virtio_interrupt(frame->vector);net_interrupt(frame->vector);if(local_apic)local_apic[0xb0/4]=0;}return schedule();}
     if(frame->vector!=128) {
@@ -320,6 +357,7 @@ Frame *trap_dispatch(Frame *frame) {
         if(frame->vector==14&&(native_write_fault(current_task,address,frame->error)||native_lazy_fault(current_task,address,frame->error)))return &t->frame;
         if(native_fault_signal(current_task,frame->vector,address))return &t->frame; /* final_context delivers the handler */
         task_faults[current_task]=frame->vector+1;task_fault_addresses[current_task]=address;t->state=DEAD;exit_codes[current_task]=-128-(i64)frame->vector;
+        storage_service_fault(exit_codes[current_task]);
         if(native_active[current_task])native_mark_group(current_task,exit_codes[current_task]);
         serial("FAULT isolated task=");hex(current_task);serial(" vector=");hex(frame->vector);
         serial(" address=");hex(address);serial(" error=");hex(frame->error);serial(" rip=");hex(frame->rip);serial("\r\n");
@@ -363,7 +401,13 @@ Frame *trap_dispatch(Frame *frame) {
         break;
     }
     case SYS_TICKS:result=timer_ticks;break;
-    case SYS_EXIT:exit_codes[current_task]=(i64)frame->rdi;t->state=DEAD;reschedule=1;break;
+    case SYS_EXIT:exit_codes[current_task]=(i64)frame->rdi;t->state=DEAD;storage_service_fault(exit_codes[current_task]);reschedule=1;break;
+    case SYS_STORAGE:
+        if(current_task!=STORAGE_TASK||!virtio_ready||!virtio_storage_service.active)result=ERR_CAP;
+        else if(frame->rdi<STORAGE_IPC_READ||frame->rdi>STORAGE_IPC_FLUSH)result=STORAGE_IPC_E_OPCODE;
+        else result=virtio_transfer(frame->rsi,(void *)VIRTIO_BOUNCE,frame->rdx,
+                                    frame->rdi==STORAGE_IPC_READ?0:frame->rdi==STORAGE_IPC_WRITE?1:4)?STORAGE_IPC_OK:STORAGE_IPC_E_IO;
+        break;
     case SYS_FILE_READ:case SYS_FILE_WRITE:result=file_transfer(frame->rdi,frame->rax==SYS_FILE_WRITE);break;
     case SYS_FILE_LIST: {
         FileEntry *entry=user_buffer(current_task,frame->rsi,sizeof(FileEntry),1);
@@ -419,10 +463,11 @@ void kernel_main(void) {
     create_task(DESKTOP,desktop_image,desktop_image_size,DESKTOP_TEXT_END,DESKTOP_RO_END,fb);
     create_task(INPUT,input_image,input_image_size,INPUT_TEXT_END,INPUT_RO_END,fb);
     create_task(DISPLAY,display_image,display_image_size,DISPLAY_TEXT_END,DISPLAY_RO_END,fb);
+    create_task(STORAGE_TASK,storage_image,storage_image_size,STORAGE_TEXT_END,STORAGE_RO_END,0);
     native_memory_init();
     if(native_ready){entropy_init();virtio_net_init();}
 #ifdef AURORA_SELF_TEST
-    for(int i=3;i<10;i++)create_task(i,probe_image,probe_image_size,PROBE_TEXT_END,PROBE_RO_END,fb);
+    for(int i=APP_FIRST;i<APP_FIRST+7;i++)create_task(i,probe_image,probe_image_size,PROBE_TEXT_END,PROBE_RO_END,fb);
 #endif
     smp_init();timer_init();serial("AURORA: private CR3, W^X, IPC, PIT preemption ready\r\n");
     __atomic_store_n(&kernel_started,1,__ATOMIC_RELEASE);current_task=TASK_COUNT-1;enter_user(schedule());

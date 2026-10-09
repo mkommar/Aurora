@@ -173,22 +173,24 @@ ABI alone does not count.
    is selected. VT-d/AMD-Vi page-table programming, fault handling, QEMU or
    selected-hardware negative DMA tests, and storage-service extraction remain
    required before claiming hardware isolation.
-3. **Storage service extraction.** The bounded next step is implemented:
-   `src/storage_service.h` defines a versioned, bounded request/response ABI
-   with explicit service capability, owner/device, range, DMA, single-flight,
-   generation, completion, error, cancellation, quiesce and handoff checks.
-   The VirtIO block path still submits through this kernel broker before
-   touching its descriptors. The host fixture can start and dispatch a
-   generation-tagged service, cancel it, revoke its DMA domain, and hand off to
-   a validated replacement without accepting stale completions. Storage has
-   **not** moved to a guest ring-3 module: this milestone does not claim module
-   entry, hardware IOMMU isolation, or a complete storage microkernel
-   extraction. `test-storage-service.py` covers malformed requests,
-   overflow/bounds, capability/device denial, DMA rejection, startup/dispatch,
-   in-flight cancellation, stale generation rejection, restart handoff,
-   completion errors, and teardown. Keep boot recovery and ATA in-kernel until
-   a real ring-3 service can pass read/write/flush, restart and power-loss
-   regressions on disposable images.
+3. **Storage service extraction.** The bounded guest implementation is added:
+   the built-in storage service is compiled as a candidate ring-3 task, reaches a
+   capability-gated `SYS_STORAGE` endpoint, and uses the existing VirtIO broker
+   for bounded flush/read/write dispatch. A storage fault or exit is contained,
+   its software DMA mappings are revoked, and a fresh task is admitted only
+   after a newer-generation handoff; stale completions are rejected.
+   `test-storage-service.py` covers malformed requests, overflow/bounds,
+   capability/device denial, DMA rejection, startup/dispatch, cancellation,
+   stale generation rejection, handoff, and teardown. `test-microkernel.py`
+   is prepared to cover the deliberate guest storage crash, restart, private
+   CR3, and continued operation of the other services, but current QEMU runs
+   stop at the first invalid user return frame in `iretq` before those checks.
+   The VirtIO device, descriptors,
+   ATA fallback, and filesystem remain in the kernel. This is not hardware
+   IOMMU enforcement, arbitrary AURMOD1 module entry, or a complete
+   microkernel extraction. Keep boot recovery and ATA in-kernel until real
+   read/write/flush, restart, and power-loss regressions pass on disposable
+   images.
 4. **Networking and IPRoute2 subset.** Before packaging IPRoute2, implement and
    test `NETLINK_ROUTE`, `RTM_GETLINK`, `RTM_GETADDR`, and `RTM_GETROUTE`, with
    aligned attribute validation, dump sequencing and stable errors. Do not
