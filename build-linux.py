@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+from qemu_iommu import write_dmar
 
 ROOT = Path(__file__).resolve().parent
 
@@ -191,6 +192,7 @@ def main():
         if (app / f'{name}.elf').stat().st_size > 65536:
             raise SystemExit('Executable exceeds the initial 64 KiB file limit')
     pack_files(image, {name: out / 'apps' / f'{name}.elf' for name in ('hello', 'calc', 'filedemo')})
+    write_dmar(out / 'qemu-dmar.bin')
     print(f'Built Aurora with Linux tools: {out / "aurora.img"}')
 
 

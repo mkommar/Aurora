@@ -11,6 +11,7 @@ static u16 radeon_device;
 static u32 radeon_bar0, radeon_irq, radeon_generation;
 static u64 radeon_mmio, radeon_vram;
 static int radeon_flr, radeon_irq_cap;
+static u64 dma_faults_reported;
 #define NX (1ULL<<63)
 #define PRESENT 1ULL
 #define WRITE 2ULL
@@ -81,7 +82,7 @@ static Gate idt[256];
 #define DMA_DOMAIN_NET 2
 #define DMA_DOMAIN_ENTROPY 3
 static int dma_bootstrap(void) {
-    if (!dma_init(DMA_BACKEND_SOFTWARE)) return 0;
+    if (!dma_init(DMA_BACKEND_HARDWARE)) return 0;
     u32 storage=dma_domain_create(SERVICE_STORAGE,SERVICE_CAP_STORAGE,0x0d000000ULL,0x0d100000ULL);
     u32 net=dma_domain_create(SERVICE_NET,SERVICE_CAP_NET,0x0e100000ULL,0x0e220000ULL);
     u32 entropy=dma_domain_create(SERVICE_ENTROPY,SERVICE_CAP_ENTROPY,0x0e300000ULL,0x0e305000ULL);
@@ -259,6 +260,11 @@ static int port_allowed(u64 port,u64 width,int read) {
 }
 Frame *schedule(void) {
     compatibility_enter();
+    dma_fault_poll();
+    if (dma_faults != dma_faults_reported) {
+        dma_faults_reported = dma_faults;
+        serial("IOMMU: DMA fault status=");hex(dma_fault_status);serial(" reason=");hex(vtd_fault_reason(dma_fault_status));serial("; DMA disabled\r\n");
+    }
     net_poll();
     native_timers();native_wake_waiters();
     u32 old=current_task;u32 cpu=cpu_local()->index;
@@ -454,6 +460,7 @@ void kernel_main(void) {
     for(int i=0;i<TASK_COUNT;i++){tasks[i].state=DEAD;task_cpu[i]=-1;task_affinity[i]=1;}
     native_clock_init();
     if (!dma_bootstrap()) panic("DMA isolation unavailable");
+    serial("IOMMU: Intel VT-d enabled\r\n");
     virtio_block_init();
     filesystem_init();
     native_fs_init();vfs_reclaim_orphans();

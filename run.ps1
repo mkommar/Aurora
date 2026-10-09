@@ -3,9 +3,10 @@ $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 if (!$NoBuild) { & "$PSScriptRoot/build.ps1" -SelfTest:$SelfTest }
 $output = if ($SelfTest) { 'build/selftest' } else { 'build' }
+& python "$PSScriptRoot/qemu_iommu.py" "$output/qemu-dmar.bin"
 $qemu = Join-Path $PSScriptRoot 'tools/qemu/qemu-system-x86_64.exe'
 if (!(Test-Path $qemu)) { $qemu = (Get-Command qemu-system-x86_64.exe -ErrorAction Stop).Source }
-$arguments = @('-name','Aurora OS','-machine','pc','-accel','tcg,thread=multi','-cpu','qemu64','-smp',"$Cpus",'-m','128M','-vga','std','-drive',"format=raw,file=$output/aurora.img",'-serial',"file:$output/serial.log",'-net','none','-qmp','tcp:127.0.0.1:4444,server=on,wait=off')
+$arguments = @('-name','Aurora OS','-machine','q35','-device','intel-iommu,intremap=on','-acpitable',"file=$output/qemu-dmar.bin",'-accel','tcg,thread=multi','-cpu','qemu64','-smp',"$Cpus",'-m','128M','-vga','std','-drive',"format=raw,file=$output/aurora.img",'-serial',"file:$output/serial.log",'-net','none','-qmp','tcp:127.0.0.1:4444,server=on,wait=off')
 if (!$NativeGcc -and !$Minimal -and !$SelfTest -and (Test-Path 'build/development.img')) {
     $arguments[$arguments.IndexOf('128M')] = '1G'
     $arguments += @('-drive','format=raw,file=build/development.img,if=none,id=development','-device','virtio-blk-pci,drive=development,disable-modern=on')
