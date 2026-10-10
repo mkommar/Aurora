@@ -1,0 +1,5 @@
+virtio_queue_notify
+virtio_pci_notify
+virtio_pci_notify_write
+virtio_net_announce_notify
+net_rx_pkt_parsed
