@@ -55,7 +55,7 @@ static inline int storage_ipc_request_validate(const StorageIpcRequest *request,
                                                 u32 expected_dma_domain,
                                                 u64 device_sectors,
                                                 StorageIpcDmaCheck dma_check) {
-    u64 bytes, end;
+    u64 bytes, dma_bytes, end;
     if (!request) return STORAGE_IPC_E_SIZE;
     if (request->version != STORAGE_IPC_VERSION) return STORAGE_IPC_E_VERSION;
     if (request->size != sizeof(*request)) return STORAGE_IPC_E_SIZE;
@@ -76,10 +76,12 @@ static inline int storage_ipc_request_validate(const StorageIpcRequest *request,
         return STORAGE_IPC_E_BOUNDS;
     if (request->count > (~0ULL / STORAGE_IPC_SECTOR_SIZE)) return STORAGE_IPC_E_BOUNDS;
     bytes = request->count * STORAGE_IPC_SECTOR_SIZE;
+    if (bytes > ~0ULL - 4095ULL) return STORAGE_IPC_E_BOUNDS;
+    dma_bytes = (bytes + 4095ULL) & ~4095ULL;
     if (!request->buffer || request->buffer > ~0ULL - bytes ||
         (request->buffer & (STORAGE_IPC_SECTOR_SIZE - 1))) return STORAGE_IPC_E_BOUNDS;
     end = request->buffer + bytes;
-    if (end <= request->buffer || !dma_check || !dma_check(request->buffer, bytes,
+    if (end <= request->buffer || !dma_check || !dma_check(request->buffer, dma_bytes,
                                                               request->opcode == STORAGE_IPC_READ ? 2U : 1U))
         return STORAGE_IPC_E_DMA;
     return STORAGE_IPC_OK;

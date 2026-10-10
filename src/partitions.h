@@ -6,6 +6,13 @@ static u64 native_disk_sectors;
 volatile u64 gpt_backup_recoveries,gpt_repairs,gpt_damaged_copies,gpt_repair_failures;
 static u32 partition_crc(const u8 *bytes,u32 count){u32 crc=~0U;while(count--){crc^=*bytes++;for(int i=0;i<8;i++)crc=(crc>>1)^((0U-(crc&1))&0xedb88320U);}return ~crc;}
 static int native_raw_disk(u32,void *,int);
+#ifdef AURORA_NET_TRACE
+static int gpt_read_sector(u32 lba,void *data){
+    int ok=native_raw_disk(lba,data,0);serial("GPT TRACE read lba=");hex(lba);serial(ok?" ok\r\n":" fail\r\n");return ok;
+}
+#else
+#define gpt_read_sector(lba,data) native_raw_disk(lba,data,0)
+#endif
 /* Scratch below the native page pool, which is initialised after mounting. */
 #ifndef GPT_PRIMARY_ENTRIES
 #define GPT_PRIMARY_ENTRIES ((u8 *)0x0e000000)
@@ -36,15 +43,23 @@ static int gpt_entries_valid(const u8 *header,const u8 *entries){
 }
 /* Load the header at `lba` and its table into `entries`; 1 when both validate. */
 static int gpt_load(u64 lba,u8 *header,u8 *entries){
-    if(!lba||lba>=native_disk_sectors||lba>=0x10000000||!native_raw_disk((u32)lba,header,0))return 0;
-    for(int i=0;i<8;i++)if(header[i]!=(u8)"EFI PART"[i])return 0;
+    if(!lba||lba>=native_disk_sectors||lba>=0x10000000||!gpt_read_sector((u32)lba,header))return 0;
+    if(header[0]!=(u8)'E'||header[1]!=(u8)'F'||header[2]!=(u8)'I'||header[3]!=(u8)' '){
+#ifdef AURORA_NET_TRACE
+        serial("GPT TRACE bad signature lba=");hex(lba);serial(" bytes=");hex(*(u32 *)header);serial("\r\n");return 0;
+#endif
+        return 0;
+    }
     u32 size=*(u32 *)(header+12),expected=*(u32 *)(header+16);if(size<92||size>512)return 0;
+#ifdef AURORA_NET_TRACE
+    serial("GPT TRACE header lba=");hex(lba);serial(" size=");hex(size);serial(" current=");hex(*(u64 *)(header+24));serial(" alternate=");hex(*(u64 *)(header+32));serial(" table=");hex(*(u64 *)(header+72));serial(" entries=");hex(*(u32 *)(header+80));serial("\r\n");
+#endif
     *(u32 *)(header+16)=0;u32 actual=partition_crc(header,size);*(u32 *)(header+16)=expected;
     if(actual!=expected||*(u32 *)(header+8)!=0x10000||*(u32 *)(header+20)||!gpt_geometry(header,lba))return 0;
     u64 table=*(u64 *)(header+72);
     u32 count=*(u32 *)(header+80),entry_size=*(u32 *)(header+84),crc=*(u32 *)(header+88);
     (void)entry_size;
-    for(u32 i=0;i<gpt_table_sectors(header);i++)if(!native_raw_disk((u32)table+i,entries+i*512,0))return 0;
+    for(u32 i=0;i<gpt_table_sectors(header);i++)if(!gpt_read_sector((u32)table+i,entries+i*512))return 0;
     return partition_crc(entries,count*128)==crc&&gpt_entries_valid(header,entries);
 }
 /* Rewrite the copy at `lba` (table at `table`) from a validated header. */
@@ -69,7 +84,7 @@ static int gpt_agree(const u8 *a,const u8 *b,const u8 *ae,const u8 *be){
 static int native_partitions_init(void){
     native_partition_sectors=0;fat_partition_base=0;fat_partition_sectors=0;
     native_partition_base=fat_partition_base=0;
-    u8 sector[512],primary[512],backup[512];if(!native_raw_disk(0,sector,0))return 0;
+    u8 sector[512],primary[512],backup[512];if(!gpt_read_sector(0,sector))return 0;
     if(sector[510]!=0x55||sector[511]!=0xaa)return 1;
     int protective=0;
     for(int i=0;i<4;i++){u8 *entry=sector+446+i*16;u32 start=*(u32 *)(entry+8),count=*(u32 *)(entry+12);
