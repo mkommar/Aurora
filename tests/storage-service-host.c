@@ -8,7 +8,7 @@ typedef unsigned long long u64; typedef long long i64;
 static u64 allowed_base, allowed_size;
 static u32 revoked_domain;
 static int dma_check(u64 address, u64 length, u32 permissions) {
-    return (permissions == 1 || permissions == 2) && address >= allowed_base &&
+    return (permissions == 1 || permissions == 2) && !(length & 4095) && address >= allowed_base &&
            length <= allowed_size && address + length > address && address + length <= allowed_base + allowed_size;
 }
 static int dma_revoke(u32 domain) { revoked_domain = domain; return 1; }
