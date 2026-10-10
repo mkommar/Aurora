@@ -56,7 +56,12 @@ static int ext2_recount(void){
     ext4_sb_set_free_blocks_cnt(sb,free_blocks);sb->free_inodes_count=(u32)free_inodes;return 0;
 }
 static void ext2_init(void){
-    if(!native_disk(2,native_sector,0)||*(u16 *)(native_sector+56)!=0xef53)return;
+    if(!native_disk(2,native_sector,0)||*(u16 *)(native_sector+56)!=0xef53){
+#if defined(AURORA_NET_TRACE)
+        serial("EXT2: superblock read failed\r\n");
+#endif
+        return;
+    }
     if(*(u16 *)(native_sector+58)!=1){ext2_unclean_mounts++;serial("EXT2: previous session did not unmount cleanly\r\n");}
     ext2_device.bdif->ph_bcnt=native_partition_sectors;ext2_device.part_size=(u64)native_partition_sectors*512;
     int error=ext4_device_register(&ext2_device,"development");if(!error)error=ext4_mount("development","/",0);
