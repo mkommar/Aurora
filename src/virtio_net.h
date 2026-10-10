@@ -20,9 +20,12 @@ static u32 entropy_notify_multiplier;
 static u8 net_tx_busy[256];
 static u8 net_notify_announced[2];
 static int net_tx_announced,net_rx_completion_announced;
+static unsigned net_header_size(void){return net_modern?12U:10U;}
 #if defined(AURORA_NET_TRACE)
 static u16 net_rx_reported_used;
 static u8 net_packets_reported;
+static u8 net_rx_polls_reported;
+static u8 net_tx_used_reported;
 #endif
 volatile u64 net_interrupts,net_bad_descriptors,net_entropy_bytes,net_entropy_failures;
 static u64 ring_used(u64 base,u16 size){return (base+16*size+6+2*size+4095)&~4095ULL;}
@@ -115,6 +118,9 @@ uint32_t aurora_net_now(void){return (u32)(timer_ticks*10);}
 void aurora_net_panic(const char *message){serial(message);panic(" lwIP invariant\r\n");}
 static void net_reclaim_tx(void){
     volatile u16 *used=(void *)ring_used(NET_TX_RING,net_tx_size);__atomic_thread_fence(__ATOMIC_ACQUIRE);
+#if defined(AURORA_NET_TRACE)
+    if(net_modern&&net_tx_used_reported<8){serial("NET: modern TX used=");hex(used[1]);serial("\r\n");net_tx_used_reported++;}
+#endif
     if((u16)(used[1]-net_tx_used)>net_tx_size){net_bad_descriptors++;net_ready=0;return;}
     while(net_tx_used!=used[1]){volatile u32 *entry=(void *)((u64)used+4+8*(net_tx_used%net_tx_size));u32 id=entry[0];
         if(id>=net_tx_size||!net_tx_busy[id]){net_bad_descriptors++;net_ready=0;return;}
@@ -135,10 +141,20 @@ int aurora_net_transmit(const void *packet,unsigned length){
     if(!net_ready||!entropy_ready||length>1518||length<14 ||
        !dma_validate(net_device,DMA_DOMAIN_NET,NET_TX_RING,0x10000,DMA_READ|DMA_WRITE) ||
        !dma_validate(net_device,DMA_DOMAIN_NET,NET_TX_DATA,0x80000,DMA_READ|DMA_WRITE))return 0;
+#if defined(AURORA_NET_TRACE)
+    if(net_modern){
+        const u8 *frame=packet;serial("NET: modern TX frame ethertype=");hex(((u16)frame[12]<<8)|frame[13]);
+        if(length>=42){serial(" proto=");hex(frame[23]);serial(" udp=");hex(((u16)frame[34]<<8)|frame[35]);serial("->");hex(((u16)frame[36]<<8)|frame[37]);serial(" op=");hex(frame[42]);}
+        serial(" length=");hex(length);serial("\r\n");
+    }
+#endif
     net_reclaim_tx();if(!net_ready)return 0;
     u32 id;for(id=0;id<net_tx_size&&net_tx_busy[id];id++){}if(id==net_tx_size)return 0;
-    u8 *buffer=(void *)(NET_TX_DATA+id*NET_BUFFER);memset(buffer,0,10);memcpy(buffer+10,packet,length);
-    VirtioDescriptor *d=(void *)NET_TX_RING;d[id]=(VirtioDescriptor){(u64)buffer,length+10,0,0};net_tx_busy[id]=1;
+    unsigned header=net_header_size();u8 *buffer=(void *)(NET_TX_DATA+id*NET_BUFFER);memset(buffer,0,header);memcpy(buffer+header,packet,length);
+#if defined(AURORA_NET_TRACE)
+    serial("NET: modern TX buffer prepared length=");hex(length);serial("\r\n");
+#endif
+    VirtioDescriptor *d=(void *)NET_TX_RING;d[id]=(VirtioDescriptor){(u64)buffer,length+header,0,0};net_tx_busy[id]=1;
     volatile u16 *avail=(void *)(NET_TX_RING+16*net_tx_size);avail[2+net_tx_avail%net_tx_size]=id;
     __atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=++net_tx_avail;
     if (net_modern&&!net_tx_announced) { serial("NET: modern TX publication queue=1\r\n");net_tx_announced=1; }
@@ -148,6 +164,12 @@ static void net_poll(void){
     if(!net_ready)return;
     if(!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_RING,0x10000,DMA_READ|DMA_WRITE) ||
        !dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_DATA,0x80000,DMA_READ|DMA_WRITE)) { net_ready=0; return; }
+#if defined(AURORA_NET_TRACE)
+    if(net_modern&&net_rx_polls_reported<8){
+        volatile u16 *poll_used=(void *)ring_used(NET_RX_RING,net_rx_size),*poll_avail=(void *)(NET_RX_RING+16*net_rx_size);
+        serial("NET: modern RX poll used=");hex(poll_used[1]);serial(" avail=");hex(poll_avail[1]);serial(" DMA visible\r\n");net_rx_polls_reported++;
+    }
+#endif
     net_reclaim_tx();if(!net_ready)return;
     volatile u16 *used=(void *)ring_used(NET_RX_RING,net_rx_size),*avail=(void *)(NET_RX_RING+16*net_rx_size);
     __atomic_thread_fence(__ATOMIC_ACQUIRE);
@@ -162,12 +184,12 @@ static void net_poll(void){
         if(net_modern){serial("NET: modern RX used entry id=");hex(id);serial(" length=");hex(length);serial(" buffer=");hex(NET_RX_DATA+(u64)id*NET_BUFFER);serial("\r\n");}
 #endif
         if(id>=net_rx_size){net_bad_descriptors++;net_ready=0;return;}
-        u8 *buffer=(void *)(NET_RX_DATA+id*NET_BUFFER);
-        if(length>=24&&length<=1528&&!buffer[0]&&!buffer[1]){
+        u8 *buffer=(void *)(NET_RX_DATA+id*NET_BUFFER);unsigned header=net_header_size();
+        if(length>=header+14&&length<=header+1518&&!buffer[0]&&!buffer[1]){
 #if defined(AURORA_NET_TRACE)
-            if(net_modern&&net_packets_reported<8){serial("NET: packet parsed length=");hex(length-10);serial(" ethertype=");hex(((u16)buffer[12]<<8)|buffer[13]);serial("\r\n");net_packets_reported++;}
+            if(net_modern&&net_packets_reported<8){serial("NET: packet parsed length=");hex(length-header);serial(" ethertype=");hex(((u16)buffer[header+12]<<8)|buffer[header+13]);serial("\r\n");net_packets_reported++;}
 #endif
-            network_input(buffer+10,length-10);
+            network_input(buffer+header,length-header);
         }else net_bad_descriptors++;
         if (net_modern&&!net_rx_completion_announced) { serial("NET: modern RX completion queue=0\r\n");net_rx_completion_announced=1; }
         net_rx_used++;avail[2+net_rx_avail%net_rx_size]=id;net_rx_avail++;notify=1;
