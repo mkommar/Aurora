@@ -110,7 +110,20 @@ together when maintaining the system.
 vendored under `third_party/network-ca` because the upstream current-bundle URL
 changes over time. lwIP's source and BSD license are in `third_party`.
 
-`build-network-bootstrap.py` runs `bootstrap-network.sh` in the temporary
+`fetch-network-sources.py` first downloads or reuses only the exact entries in
+`network-sources.lock.json`; it rejects changed content. On Linux,
+`build-network-bootstrap-linux.py` then deterministically builds the disposable
+bootstrap payload and writes the generated archive and manifest under
+`tools/network-bootstrap/`. These are generated artifacts, not source locks;
+the manifest records the archive hash, source lock, recipe hash, and compiler.
+The Linux path is:
+
+```sh
+python3 fetch-network-sources.py
+python3 build-network-bootstrap-linux.py
+```
+
+The VM path, `build-network-bootstrap.py`, runs `bootstrap-network.sh` in the temporary
 Linux build VM using the already pinned native musl GCC 11.2.1. It verifies
 inputs, builds static libraries and curl, and exports
 `tools/network-bootstrap/network-bootstrap.tar.gz` with a hash manifest.

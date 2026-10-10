@@ -6,16 +6,25 @@ def files():
     root=Path('tools/network-bootstrap')
     archive=root/'network-bootstrap.tar.gz'
     manifest=json.loads((root/'manifest.json').read_text())
+    lock=json.loads(Path('network-sources.lock.json').read_text())
+    if manifest.get('sources') != lock:
+        raise ValueError('Bootstrap manifest source lock mismatch')
+    if manifest.get('recipe_sha256') != hashlib.sha256(Path('bootstrap-network.sh').read_bytes()).hexdigest():
+        raise ValueError('Bootstrap recipe hash mismatch')
     if hashlib.sha256(archive.read_bytes()).hexdigest()!=manifest['sha256']:raise ValueError('Bootstrap archive hash mismatch')
     result={}
     with tarfile.open(archive) as source:
         for member in source:
-            if not member.isfile():continue
+            if not member.isfile():
+                raise ValueError('Bootstrap archive contains a non-file: '+member.name)
             path=PurePosixPath(member.name)
-            if path.is_absolute() or '..' in path.parts or path.parts[0] not in ('bin','lib','include','src','etc'):
+            if (not path.parts or path.is_absolute() or '..' in path.parts or
+                    path.parts[0] not in ('bin','lib','include','src','etc') or
+                    str(path) != member.name or str(path) in result):
                 raise ValueError('Unexpected bootstrap path: '+member.name)
             result['/'+str(path)]=source.extractfile(member).read()
-    lock=json.loads(Path('network-sources.lock.json').read_text())
+    for required in ('/etc/ssl/cert.pem','/src/curl-8.22.0.tar.gz','/src/mbedtls-3.6.7.tar.bz2'):
+        if required not in result:raise ValueError('Bootstrap archive missing '+required)
     for name in ('curl-8.22.0.tar.gz','mbedtls-3.6.7.tar.bz2'):
         if hashlib.sha256(result['/src/'+name]).hexdigest()!=lock[name]['sha256']:raise ValueError('Source hash mismatch: '+name)
     if hashlib.sha256(result['/etc/ssl/cert.pem']).hexdigest()!=lock['cacert.pem']['sha256']:raise ValueError('CA bundle hash mismatch')

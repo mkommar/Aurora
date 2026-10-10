@@ -102,6 +102,7 @@ def main():
                  'lib/libc.so':Path(args.musl_libc).read_bytes(),
                  'src/curl-8.22.0.tar.gz':source_data['curl-8.22.0.tar.gz'],
                  'src/mbedtls-3.6.7.tar.bz2':source_data['mbedtls-3.6.7.tar.bz2'],
+                 'etc/ssl/cert.pem':source_data['cacert.pem'],
                  'src/network-sources.lock.json':(ROOT/'network-sources.lock.json').read_bytes()}
         for library in (curl/'lib/.libs').glob('libcurl.a'): entries['lib/libcurl.a']=library.read_bytes()
         for library in sysroot.glob('lib/libmbed*.a'): entries['lib/'+library.name]=library.read_bytes()
