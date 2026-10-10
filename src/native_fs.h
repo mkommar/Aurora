@@ -116,7 +116,15 @@ static int aurorafs_rename(const char *from,const char *to){
 }
 static void native_fs_init(void){
     native_disk_sectors=virtio_present?virtio_sectors:ata_identify(1);
-    if(!native_partitions_init())return;
+    #if defined(AURORA_NET_TRACE)
+    serial("NATIVE: development filesystem init\r\n");
+    #endif
+    if(!native_partitions_init()){
+        #if defined(AURORA_NET_TRACE)
+        serial("NATIVE: partition discovery failed\r\n");
+        #endif
+        return;
+    }
     fat_init();
     if(!native_disk(0,native_sector,0))return;
     for(int i=0;i<8;i++)if(native_sector[i]!=(u8)"AURDEV01"[i]){ext2_init();return;}

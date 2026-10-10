@@ -60,6 +60,9 @@ void network_input(const void *packet,unsigned length){
     if(!initialized||length<14||length>1518){network_rx_drops++;return;}
     struct pbuf *p=pbuf_alloc(PBUF_RAW,(uint16_t)length,PBUF_RAM);if(!p){network_rx_drops++;return;}
     pbuf_take(p,packet,(uint16_t)length);network_rx_packets++;
+#ifdef AURORA_NET_TRACE
+    serial("NET TRACE RX packet parsed length=");hex(length);serial("\r\n");
+#endif
     if(interface.input(p,&interface)!=ERR_OK){pbuf_free(p);network_rx_drops++;}
 }
 void network_tick(void){if(initialized)sys_check_timeouts();}

@@ -34,6 +34,20 @@ static int virtio_pci_capabilities_complete(const VirtioPciCapability *common,
            notify->notify_multiplier && notify->notify_multiplier <= notify->length;
 }
 
+/* VirtIO 1.x queue notifications are byte offsets in the notify capability:
+ * notify_base + queue_notify_off * notify_off_multiplier. */
+static u64 virtio_pci_notify_address(const VirtioPciCapability *notify,
+                                     u64 notify_bar, u16 queue_notify_off) {
+    u64 displacement;
+    if (!virtio_pci_capability_valid(notify) || notify->length < 2 ||
+        notify->type != VIRTIO_PCI_CAP_NOTIFY || !notify->notify_multiplier ||
+        queue_notify_off > (~0U / notify->notify_multiplier)) return 0;
+    displacement = (u64)queue_notify_off * notify->notify_multiplier;
+    if (displacement > notify->length - 2) return 0;
+    if (notify_bar > ~0ULL - notify->offset - displacement - 2) return 0;
+    return notify_bar + notify->offset + displacement;
+}
+
 static u64 virtio_pci_queue_bytes(u16 queue_size) {
     u64 driver = 16ULL * queue_size + 4 + 2ULL * queue_size;
     return (driver + 4095) & ~4095ULL;

@@ -1,6 +1,7 @@
 """Exercise Aurora networking on disposable disks and loopback-only fixtures."""
-import importlib.util,json,shutil,subprocess,time,struct,argparse,re
+import importlib.util,json,shutil,subprocess,time,struct,argparse,re,os
 from pathlib import Path
+from qemu_iommu import write_dmar
 spec=importlib.util.spec_from_file_location('qmp','tools-qmp.py')
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 parser=argparse.ArgumentParser()
@@ -13,6 +14,7 @@ parser.add_argument('--script')
 parser.add_argument('--intx',action='store_true')
 parser.add_argument('--rebuild',action='store_true')
 parser.add_argument('--accel',choices=['tcg','whpx'],default='tcg')
+parser.add_argument('--qemu',default='tools/qemu/qemu-system-x86_64.exe' if os.name=='nt' else 'qemu-system-x86_64')
 args=parser.parse_args();args.virtio=True
 folder=Path(args.folder);folder.mkdir(exist_ok=True)
 shutil.copyfile('build/aurora.img',folder/'aurora.img');shutil.copyfile('build/kernel.elf',folder/'kernel.elf')
@@ -38,12 +40,13 @@ def wait(predicate,seconds=120):
     raise AssertionError('Guest timeout:\n'+log()[-5000:])
 def boot():
     global process,q
-    process=subprocess.Popen(['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel',args.accel,'-cpu','qemu64','-smp',str(args.cpus),'-m','1G',
-        '-no-reboot','-vga','std','-drive',f'format=raw,file={folder}/aurora.img,if=ide,index=0',
+    dmar=folder/'qemu-dmar.bin';write_dmar(dmar)
+    process=subprocess.Popen([args.qemu,'-machine','q35','-accel',args.accel,'-cpu','qemu64','-smp',str(args.cpus),'-m','1G',
+        '-no-reboot','-vga','std','-device','intel-iommu,intremap=on,dma-translation=on,aw-bits=48','-acpitable',f'file={dmar}','-drive',f'format=raw,file={folder}/aurora.img,if=ide,index=0',
         '-drive',f'format=raw,file={folder}/toolchain.img,'+('if=none,id=development' if args.virtio else 'if=ide,index=1'),
-        *(['-device','virtio-blk-pci,drive=development,disable-modern=on'] if args.virtio else []),
-        '-serial',f'file:{folder}/serial.log','-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0,disable-modern=on'+(',vectors=0' if args.intx else ''),'-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on','-display','none',
-        '-qmp',f'tcp:127.0.0.1:{args.qmp_port},server=on,wait=off'],creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
+        *(['-device','virtio-blk-pci,drive=development,disable-legacy=on,iommu_platform=on'] if args.virtio else []),
+        '-serial',f'file:{folder}/serial.log','-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0,disable-legacy=on,iommu_platform=on'+(',vectors=0' if args.intx else ''),'-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on','-trace',f'events={Path("qemu-network-trace-events").resolve()},file={folder / "qemu-trace.log"}','-display','none',
+        '-qmp',f'tcp:127.0.0.1:{args.qmp_port},server=on,wait=off'],**({'creationflags':subprocess.CREATE_NO_WINDOW} if hasattr(subprocess,'CREATE_NO_WINDOW') else {}),stderr=(folder/'qemu-stderr.log').open('w'))
     deadline=time.monotonic()+45
     while True:
         try:q=mod.QMP(args.qmp_port);break
@@ -52,7 +55,7 @@ def boot():
                 error=(folder/'qemu-stderr.log').read_text()
                 if 'used by another process' in error and time.monotonic()<deadline:
                     time.sleep(1)
-                    process=subprocess.Popen(process.args,creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
+                    process=subprocess.Popen(process.args,**({'creationflags':subprocess.CREATE_NO_WINDOW} if hasattr(subprocess,'CREATE_NO_WINDOW') else {}),stderr=(folder/'qemu-stderr.log').open('w'))
                     continue
                 raise RuntimeError(f'QEMU exited before QMP connected: {process.returncode}: '+error)
             if time.monotonic()>deadline:raise
@@ -83,6 +86,11 @@ def check(label,condition):
 try:
     boot()
     wait(lambda:'NET: DHCP' in log(),60)
+    check('modern VirtIO-net queue initialized','NET: modern VirtIO-net queue ready' in log())
+    check('modern RX descriptors published','NET: modern RX descriptors published queue=0' in log())
+    check('modern TX publication and notify observed','NET: modern TX publication queue=1' in log() and 'NET: modern notify queue=1 address=' in log())
+    check('modern RX used ring and notify observed','NET: modern RX used=' in log() and 'NET: modern RX completion queue=0' in log() and 'NET: modern notify queue=0 address=' in log())
+    check('packet parsing, DHCP lease and IPv4 readiness observed','NET TRACE RX packet parsed length=' in log() and 'NET: DHCP lease acquired' in log() and 'NET: IPv4 readiness confirmed' in log())
     out=command('chmod 755 /bin/curl');check('curl executable', 'Application exited: 0' in out)
     if args.rebuild:
         out=command('bash /work/rebuild-network.sh',seconds=5400)

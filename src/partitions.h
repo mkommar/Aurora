@@ -67,6 +67,7 @@ static int gpt_agree(const u8 *a,const u8 *b,const u8 *ae,const u8 *be){
     return 1;
 }
 static int native_partitions_init(void){
+    native_partition_sectors=0;fat_partition_base=0;fat_partition_sectors=0;
     native_partition_base=fat_partition_base=0;
     u8 sector[512],primary[512],backup[512];if(!native_raw_disk(0,sector,0))return 0;
     if(sector[510]!=0x55||sector[511]!=0xaa)return 1;

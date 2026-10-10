@@ -85,7 +85,7 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
    depends on `sync`), FAT32 dirty-bit handling, and a repairing mode for the
    checker. See [FILESYSTEMS.md](FILESYSTEMS.md).
 5. **Networking.** Implemented for IPv4 clients and bounded TCP listeners in
-    QEMU TCG: transitional
+    QEMU TCG: modern VirtIO 1.x
    VirtIO-net, pinned lwIP 2.2.1, Ethernet/ARP/ICMP, TCP/UDP, DHCP, musl DNS,
    nonblocking sockets, poll/select, descriptor sharing and eventfd. Network
    processing remains in the kernel under the native compatibility lock.

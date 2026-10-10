@@ -23,6 +23,7 @@ static u32 virtio_irq_line,virtio_slots;
 #define VIRTIO_MAX_SECTORS (VIRTIO_SLOTS*VIRTIO_SLOT_SECTORS)
 static int virtio_modern;
 static u64 virtio_common,virtio_notify,virtio_device_config;
+static VirtioPciCapability virtio_notify_cap;
 static u32 virtio_notify_multiplier;
 static int virtio_storage_dma_check(u64 address,u64 length,u32 permissions){
     return dma_validate(virtio_device,DMA_DOMAIN_STORAGE,address,length,permissions);
@@ -51,7 +52,9 @@ static void virtio_mmio16_write(u64 address,u32 offset,u16 value){*(volatile u16
 static void virtio_mmio64_write(u64 address,u32 offset,u64 value){*(volatile u64 *)(address+offset)=value;}
 static void virtio_modern_notify(void){
     u16 offset=virtio_mmio16(virtio_common,0x1e);
-    *(volatile u16 *)(virtio_notify+(u64)offset*virtio_notify_multiplier)=0;
+    u64 address=virtio_pci_notify_address(&virtio_notify_cap,virtio_notify,offset);
+    if (!address) { virtio_ready=0; return; }
+    *(volatile u16 *)address=0;
 }
 static int virtio_modern_capabilities(u32 device,VirtioPciCapability *common,
                                       VirtioPciCapability *notify,VirtioPciCapability *config){
@@ -77,8 +80,9 @@ static int virtio_modern_block_init(u32 address){
     u64 common_bar=virtio_bar(address,common.bar),notify_bar=virtio_bar(address,notify.bar),config_bar=virtio_bar(address,config.bar);
     if(!common_bar||!notify_bar||!config_bar)return 0;
     if(!dma_assign_device(address,DMA_DOMAIN_STORAGE))return 0;
-    virtio_device=address;virtio_common=common_bar+common.offset;virtio_notify=notify_bar+notify.offset;
+    virtio_device=address;virtio_common=common_bar+common.offset;virtio_notify=notify_bar;
     virtio_device_config=config_bar+config.offset;virtio_notify_multiplier=notify.notify_multiplier;
+    virtio_notify_cap=notify;
     *(volatile u8 *)(virtio_common+0x14)=0;*(volatile u8 *)(virtio_common+0x14)=1;*(volatile u8 *)(virtio_common+0x14)=3;
     u64 device_features=(u64)virtio_mmio32(virtio_common,0x04);
     virtio_mmio32_write(virtio_common,0x00,1);device_features|=(u64)virtio_mmio32(virtio_common,0x04)<<32;
