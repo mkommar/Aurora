@@ -92,6 +92,15 @@ class Disk:
 
 disk = Disk(fixture())
 check('valid GPT needs no writes', lib.recovery_gpt() == 1 and not disk.events)
+lib.recovery_partition_base.restype = C.c_uint
+lib.recovery_partition_sectors.restype = C.c_uint
+lib.recovery_fat_base.restype = C.c_uint
+lib.recovery_fat_sectors.restype = C.c_uint
+check('valid GPT discovers both Aurora partitions',
+      lib.recovery_partition_base() == 64 and lib.recovery_partition_sectors() == 960 and
+      lib.recovery_fat_base() == 1024 and lib.recovery_fat_sectors() == 1024)
+disk = Disk(fixture()[:-512])
+check('truncated GPT is rejected without out-of-range I/O', lib.recovery_gpt() == 0 and not disk.events and not disk.bad_io)
 for damaged in [1, SECTORS-1]:
     original = fixture(); original[damaged*512] ^= 255
     table = 2 if damaged == 1 else SECTORS-33

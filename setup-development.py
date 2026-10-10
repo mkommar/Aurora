@@ -4,6 +4,7 @@ Uses the pinned lwext4 host image tool; never formats a physical drive.
 """
 from pathlib import Path
 import argparse,ctypes as C,struct,tarfile,posixpath,zlib,uuid,os
+from development_image import write_gpt as deterministic_write_gpt
 p=argparse.ArgumentParser();p.add_argument('--image',default='build/development.img');p.add_argument('--gnu',action='store_true');p.add_argument('--partitioned',action='store_true');args=p.parse_args()
 target=Path(args.image);temporary=target.with_suffix('.img.partial')
 if target.exists() or temporary.exists():raise SystemExit('Refusing to overwrite an existing image or partial image')
@@ -46,7 +47,7 @@ def write_gpt(disk,sectors):
     for sector,data in [(1,header(1,sectors-1,2)),(2,entries),(sectors-33,entries),(sectors-1,header(sectors-1,1,sectors-33))]:disk.seek(sector*512);disk.write(data)
 with temporary.open('x+b') as disk:
     disk.truncate((1314816 if args.partitioned else 1048576)*512)
-    if args.partitioned:write_gpt(disk,1314816)
+    if args.partitioned:deterministic_write_gpt(disk)
     @callback_type
     def transfer(pointer,sector,count,write):
         try:

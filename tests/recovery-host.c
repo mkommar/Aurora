@@ -17,6 +17,10 @@ __declspec(dllexport) void recovery_setup(u64 sectors,int (*callback)(u32,void *
     gpt_backup_recoveries=gpt_repairs=gpt_damaged_copies=gpt_repair_failures=0;
 }
 __declspec(dllexport) int recovery_gpt(void){return native_partitions_init();}
+__declspec(dllexport) u32 recovery_partition_base(void){return native_partition_base;}
+__declspec(dllexport) u32 recovery_partition_sectors(void){return native_partition_sectors;}
+__declspec(dllexport) u32 recovery_fat_base(void){return fat_partition_base;}
+__declspec(dllexport) u32 recovery_fat_sectors(void){return fat_partition_sectors;}
 __declspec(dllexport) u64 recovery_count(int which){return which==0?gpt_repairs:which==1?gpt_repair_failures:gpt_backup_recoveries;}
 static int ext2_ready=1,ext2_device;
 struct ext4_sblock {u16 state;};
