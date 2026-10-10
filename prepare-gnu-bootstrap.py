@@ -9,17 +9,17 @@ import concurrent.futures, hashlib, json, urllib.request
 
 ROOT=Path('tools/gnu-bootstrap'); ROOT.mkdir(parents=True,exist_ok=True)
 INPUTS={
- 'gzip-1.14.tar.xz':'https://ftp.gnu.org/gnu/gzip/gzip-1.14.tar.xz',
- 'linux-virt-6.18.52-r0.apk':'https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/linux-virt-6.18.52-r0.apk',
+  'gzip-1.14.tar.xz':'https://mirrors.kernel.org/gnu/gzip/gzip-1.14.tar.xz',
+  'linux-virt-6.18.55-r0.apk':'https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/linux-virt-6.18.55-r0.apk',
  'alpine-minirootfs-3.23.0-x86_64.tar.gz':'https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/x86_64/alpine-minirootfs-3.23.0-x86_64.tar.gz',
- 'bash-5.2.37.tar.gz':'https://ftp.gnu.org/gnu/bash/bash-5.2.37.tar.gz',
- 'make-4.4.1.tar.gz':'https://ftp.gnu.org/gnu/make/make-4.4.1.tar.gz',
- 'coreutils-9.5.tar.xz':'https://ftp.gnu.org/gnu/coreutils/coreutils-9.5.tar.xz',
- 'sed-4.9.tar.xz':'https://ftp.gnu.org/gnu/sed/sed-4.9.tar.xz',
- 'grep-3.11.tar.xz':'https://ftp.gnu.org/gnu/grep/grep-3.11.tar.xz',
- 'gawk-5.3.1.tar.xz':'https://ftp.gnu.org/gnu/gawk/gawk-5.3.1.tar.xz',
- 'findutils-4.10.0.tar.xz':'https://ftp.gnu.org/gnu/findutils/findutils-4.10.0.tar.xz',
- 'tar-1.35.tar.xz':'https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz',
+  'bash-5.2.37.tar.gz':'https://mirrors.kernel.org/gnu/bash/bash-5.2.37.tar.gz',
+  'make-4.4.1.tar.gz':'https://mirrors.kernel.org/gnu/make/make-4.4.1.tar.gz',
+  'coreutils-9.5.tar.xz':'https://mirrors.kernel.org/gnu/coreutils/coreutils-9.5.tar.xz',
+  'sed-4.9.tar.xz':'https://mirrors.kernel.org/gnu/sed/sed-4.9.tar.xz',
+  'grep-3.11.tar.xz':'https://mirrors.kernel.org/gnu/grep/grep-3.11.tar.xz',
+  'gawk-5.3.1.tar.xz':'https://mirrors.kernel.org/gnu/gawk/gawk-5.3.1.tar.xz',
+  'findutils-4.10.0.tar.xz':'https://mirrors.kernel.org/gnu/findutils/findutils-4.10.0.tar.xz',
+  'tar-1.35.tar.xz':'https://mirrors.kernel.org/gnu/tar/tar-1.35.tar.xz',
 }
 lockpath=Path('gnu-bootstrap.lock.json')
 lock=json.loads(lockpath.read_text()) if lockpath.exists() else {}

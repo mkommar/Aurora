@@ -13,9 +13,10 @@ static u16 entropy_port,entropy_size,entropy_avail,entropy_used;
 static int net_ready,net_irq_mode,entropy_ready,net_announced;
 static u32 net_device,entropy_device;
 static u32 net_irq_line;
-static int net_modern;
-static u64 net_common,net_notify_bar,net_device_config;
+static int net_modern,entropy_modern;
+static u64 net_common,net_notify_bar,net_device_config,entropy_common,entropy_notify;
 static VirtioPciCapability net_notify_cap;
+static u32 entropy_notify_multiplier;
 static u8 net_tx_busy[256];
 static u8 net_notify_announced[2];
 static int net_tx_announced,net_rx_completion_announced;
@@ -25,11 +26,48 @@ static u8 net_packets_reported;
 #endif
 volatile u64 net_interrupts,net_bad_descriptors,net_entropy_bytes,net_entropy_failures;
 static u64 ring_used(u64 base,u16 size){return (base+16*size+6+2*size+4095)&~4095ULL;}
+static int virtio_modern_queue(u64 common,u16 index,u64 ring,u16 *size){
+    virtio_mmio16_write(common,0x16,index);*size=virtio_mmio16(common,0x18);
+    if(!virtio_pci_queue_valid(*size))return 0;
+    memset((void *)ring,0,0x10000);virtio_mmio64_write(common,0x20,ring);
+    virtio_mmio64_write(common,0x28,ring+16*(u64)*size);
+    virtio_mmio64_write(common,0x30,ring+virtio_pci_queue_bytes(*size));
+    virtio_mmio16_write(common,0x1c,1);return 1;
+}
+static void virtio_net_modern_notify(u64 common,u64 notify,u32 multiplier,u16 queue){
+    u16 offset=virtio_mmio16(common,0x1e);
+    *(volatile u16 *)(notify+(u64)offset*multiplier)=queue;
+}
+static int virtio_net_modern_capabilities(u32 device,VirtioPciCapability *common,
+                                           VirtioPciCapability *notify,
+                                           VirtioPciCapability *config);
+static int virtio_modern_entropy_init(u32 address){
+    VirtioPciCapability common={0},notify={0},config={0};
+    if(pci_read(address,0)!=((u32)VIRTIO_PCI_DEVICE_RNG<<16|0x1af4))return 0;
+    serial("RNG: modern PCI candidate\r\n");
+    if(!virtio_net_modern_capabilities(address,&common,&notify,&config)){serial("RNG: modern capabilities rejected\r\n");return 0;}
+    pci_write16(address,4,(pci_read(address,4)&0xffff)|5);
+    u64 common_bar=virtio_bar(address,common.bar),notify_bar=virtio_bar(address,notify.bar);
+    if(!common_bar||!notify_bar||!dma_assign_device(address,DMA_DOMAIN_ENTROPY)){serial("RNG: modern DMA setup rejected\r\n");return 0;}
+    entropy_device=address;entropy_common=common_bar+common.offset;entropy_notify=notify_bar+notify.offset;
+    entropy_notify_multiplier=notify.notify_multiplier;
+    *(volatile u8 *)(entropy_common+0x14)=0;*(volatile u8 *)(entropy_common+0x14)=1;*(volatile u8 *)(entropy_common+0x14)=3;
+    virtio_mmio32_write(entropy_common,0x00,0);u64 features=virtio_mmio32(entropy_common,0x04);
+    virtio_mmio32_write(entropy_common,0x00,1);features|=(u64)virtio_mmio32(entropy_common,0x04)<<32;
+    if(!virtio_pci_modern_features_valid(features,(1ULL<<VIRTIO_F_VERSION_1)|(1ULL<<VIRTIO_F_ACCESS_PLATFORM))){*(volatile u8 *)(entropy_common+0x14)=0;return 0;}
+    virtio_mmio32_write(entropy_common,0x08,0);virtio_mmio32_write(entropy_common,0x0c,0);
+    virtio_mmio32_write(entropy_common,0x08,1);virtio_mmio32_write(entropy_common,0x0c,1U<<1);
+    *(volatile u8 *)(entropy_common+0x14)=0x0b;if(!(*(volatile u8 *)(entropy_common+0x14)&8)){*(volatile u8 *)(entropy_common+0x14)=0;return 0;}
+    if(!virtio_modern_queue(entropy_common,0,RNG_RING,&entropy_size)){*(volatile u8 *)(entropy_common+0x14)=0;return 0;}
+    *(volatile u8 *)(entropy_common+0x14)=0x0f;entropy_modern=1;entropy_ready=1;
+    serial("RNG: modern VirtIO entropy queue ready\r\n");return 1;
+}
 static void entropy_init(void){
 #if defined(AURORA_NET_TRACE)
     serial("RNG: scanning VirtIO PCI devices\r\n");
 #endif
     for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
+        if(virtio_modern_entropy_init((bus<<16)|(slot<<11)))return;
         u32 device=(bus<<16)|(slot<<11);if(pci_read(device,0)!=0x10051af4)continue;
 #if defined(AURORA_NET_TRACE)
         serial("RNG: VirtIO PCI device found bus=");hex(bus);serial(" slot=");hex(slot);serial("\r\n");
@@ -61,7 +99,7 @@ static i64 entropy_fill(void *output,u64 count){
         VirtioDescriptor *d=(void *)RNG_RING;d[0]=(VirtioDescriptor){RNG_DATA,n,2,0};
         volatile u16 *avail=(void *)(RNG_RING+16*entropy_size),*used=(void *)ring_used(RNG_RING,entropy_size);
         avail[2+entropy_avail%entropy_size]=0;__atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=++entropy_avail;
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);outw(entropy_port+16,0);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);if(entropy_modern)virtio_net_modern_notify(entropy_common,entropy_notify,entropy_notify_multiplier,0);else outw(entropy_port+16,0);
         u32 spins=10000000;while(used[1]==entropy_used&&--spins)__asm__ volatile("pause":::"memory");
         __atomic_thread_fence(__ATOMIC_ACQUIRE);
         volatile u32 *element=(void *)((u64)used+4+8*(entropy_used%entropy_size));

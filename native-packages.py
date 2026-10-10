@@ -102,13 +102,12 @@ if __name__ == '__main__':
     mirror=None
     if args.mirror_cache:
         source_lock=json.loads(Path('packages/sources.lock.json').read_bytes())['packages']
-        mirror=NativePackageMirror(args.mirror_cache,source_lock,args.packages)
+        mirror=NativePackageMirror(args.mirror_cache,source_lock,args.packages,args.mirror_port)
         mirror.start()
-    mirror_url=mirror.guest_url(args.mirror_port) if mirror else ''
+    mirror_url=mirror.guest_url(mirror.host_port) if mirror else ''
     files,script=payload(args.packages,args.retry,mirror_url)
     path=Path(args.folder);path.mkdir(parents=True,exist_ok=True)
     job=path/'job.sh';job.write_text(script,encoding='utf-8',newline='\n')
-    forward=(mirror.host_port,args.mirror_port) if mirror else None
-    run(job,path,disk=args.disk,resume=args.resume,files=files,timeout=args.timeout,cpus=args.cpus,port=args.port,network_ready=True,host_forward=forward)
+    run(job,path,disk=args.disk,resume=args.resume,files=files,timeout=args.timeout,cpus=args.cpus,port=args.port,network_ready=True)
     harvest(path,args.packages)
     if mirror: mirror.stop()

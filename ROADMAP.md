@@ -142,11 +142,16 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
      missing packages before mutation, upgrades with rollback and rejects
      downgrades by default; alternatives, operators, conflicts, virtual packages,
      maintainer scripts and full Debian version semantics remain unsupported. A
-     deterministic APT/source distribution
-     tree, release manifest, synthetic-fixture test and configurable Pages
-     workflow are implemented; they publish supplied `.deb` files but do not
-     mirror source archives. The guest Make run is blocked by the uncached
-     source archive and host network egress. Full dpkg/APT lifecycle behavior,
+      deterministic APT/source distribution
+      tree, release manifest, synthetic-fixture test and configurable Pages
+      workflow are implemented; they publish supplied `.deb` files but do not
+      mirror source archives. The Linux bootstrap builder now completes from
+      refreshed, hash-verified Alpine/GNU inputs. The guest diffutils run
+      remains blocked after IOMMU boot because current transitional VirtIO
+      network/entropy support does not initialize with QEMU's IOMMU-capable
+      device path; no guest package result is claimed. The guest Make run is
+      also pending the same network-device compatibility fix. Full dpkg/APT
+      lifecycle behavior,
      guest build/install validation and authenticated release policy remain
      open. See [PACKAGES.md](PACKAGES.md).
 ## Microkernel and tooling sequence

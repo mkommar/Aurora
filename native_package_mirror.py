@@ -7,14 +7,14 @@ from pathlib import Path
 
 
 class NativePackageMirror:
-    """A loopback HTTP server exposed to Aurora through QEMU user NAT."""
+    """A host HTTP server exposed to Aurora through QEMU's 10.0.2.2 gateway."""
 
     def __init__(self, root, package_lock, names, port=0):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self._verify_sources(package_lock, names)
         handler = partial(SimpleHTTPRequestHandler, directory=str(self.root))
-        self.server = ThreadingHTTPServer(('127.0.0.1', port), handler)
+        self.server = ThreadingHTTPServer(('0.0.0.0', port), handler)
         self.thread = None
 
     def _verify_sources(self, package_lock, names):
