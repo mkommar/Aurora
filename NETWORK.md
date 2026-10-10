@@ -1,6 +1,6 @@
 # Aurora networking
 
-The development profile uses transitional VirtIO-net with QEMU user-mode NAT.
+The development profile uses modern VirtIO 1.x net with QEMU user-mode NAT.
 Aurora retains its original kernel. The transport reuses lwIP 2.2.1; curl 8.22.0
 and Mbed TLS 3.6.7 provide the userspace HTTP/TLS implementation.
 
@@ -76,6 +76,11 @@ does not substitute host-built or placeholder inputs.
   without deterministic `-seed` or replay options. Its randomness comes from
   QEMU's crypto backend; on Windows the platform implementation uses
   `CryptGenRandom`. The host and emulator remain trusted components.
+
+Modern VirtIO-net discovers the common, notify, and device PCI capabilities,
+maps each capability through its BAR, and writes queue notifications at
+`notify_base + queue_notify_off * notify_off_multiplier`. Invalid capability
+ranges fail closed before a queue is enabled.
 
 ## IPRoute2 boundary
 

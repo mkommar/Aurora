@@ -42,7 +42,7 @@ def boot():
         '-no-reboot','-vga','std','-drive',f'format=raw,file={folder}/aurora.img,if=ide,index=0',
         '-drive',f'format=raw,file={folder}/toolchain.img,'+('if=none,id=development' if args.virtio else 'if=ide,index=1'),
         *(['-device','virtio-blk-pci,drive=development,disable-modern=on'] if args.virtio else []),
-        '-serial',f'file:{folder}/serial.log','-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0,disable-modern=on'+(',vectors=0' if args.intx else ''),'-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on','-display','none',
+        '-serial',f'file:{folder}/serial.log','-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0'+(',vectors=0' if args.intx else ''),'-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on','-display','none',
         '-qmp',f'tcp:127.0.0.1:{args.qmp_port},server=on,wait=off'],creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
     deadline=time.monotonic()+45
     while True:
@@ -83,6 +83,9 @@ def check(label,condition):
 try:
     boot()
     wait(lambda:'NET: DHCP' in log(),60)
+    check('modern VirtIO-net queue initialized','NET: modern VirtIO-net queue ready' in log())
+    check('modern TX publication and notify observed','NET: modern TX publication queue=1' in log() and 'NET: modern notify queue=1 address=' in log())
+    check('modern RX completion and notify observed','NET: modern RX completion queue=0' in log() and 'NET: modern notify queue=0 address=' in log())
     out=command('chmod 755 /bin/curl');check('curl executable', 'Application exited: 0' in out)
     if args.rebuild:
         out=command('bash /work/rebuild-network.sh',seconds=5400)
