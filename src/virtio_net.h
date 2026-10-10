@@ -135,7 +135,7 @@ static void net_poll(void){
         net_rx_used++;avail[2+net_rx_avail%net_rx_size]=id;net_rx_avail++;notify=1;
     }
     if(notify){__atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=net_rx_avail;__atomic_thread_fence(__ATOMIC_SEQ_CST);net_notify_queue(0);}
-    network_tick();if(!net_announced&&network_configured()){net_announced=1;serial("NET: DHCP IPv4 address, gateway and TCP/UDP ready\r\n");}
+    network_tick();if(!net_announced&&network_configured()){net_announced=1;serial("NET: DHCP lease acquired\r\n");serial("NET: IPv4 readiness confirmed\r\n");serial("NET: DHCP IPv4 address, gateway and TCP/UDP ready\r\n");}
 }
 static void net_interrupt(u32 irq){
     if(!net_ready||(net_irq_mode?irq!=49:irq!=net_irq_line))return;
