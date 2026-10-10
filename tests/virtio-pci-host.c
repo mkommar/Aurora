@@ -10,6 +10,11 @@ int main(void) {
     VirtioPciCapability device = {VIRTIO_PCI_CAP_DEVICE, 4, 0x300, 0x100, 0};
     assert(virtio_pci_capabilities_complete(&common, &notify, &device));
     assert(virtio_pci_queue_bytes(8) == 4096);
+    assert(virtio_pci_queue_valid(256));
+    assert(!virtio_pci_queue_valid(2));
+    u64 required = (1ULL << VIRTIO_F_VERSION_1) | (1ULL << VIRTIO_F_ACCESS_PLATFORM);
+    assert(virtio_pci_modern_features_valid(required, required));
+    assert(!virtio_pci_modern_features_valid(1ULL << VIRTIO_F_VERSION_1, required));
     notify.notify_multiplier = 0;
     assert(!virtio_pci_capabilities_complete(&common, &notify, &device));
     notify.notify_multiplier = 4;

@@ -72,7 +72,7 @@ static int virtio_modern_capabilities(u32 device,VirtioPciCapability *common,
 }
 static int virtio_modern_block_init(u32 address){
     VirtioPciCapability common={0},notify={0},config={0};
-    if(pci_read(address,0)!=0x10421af4 || !virtio_modern_capabilities(address,&common,&notify,&config))return 0;
+    if(pci_read(address,0)!=((u32)VIRTIO_PCI_DEVICE_BLOCK<<16|0x1af4) || !virtio_modern_capabilities(address,&common,&notify,&config))return 0;
     pci_write16(address,4,(pci_read(address,4)&0xffff)|5);
     u64 common_bar=virtio_bar(address,common.bar),notify_bar=virtio_bar(address,notify.bar),config_bar=virtio_bar(address,config.bar);
     if(!common_bar||!notify_bar||!config_bar)return 0;
@@ -85,18 +85,18 @@ static int virtio_modern_block_init(u32 address){
     if(!(device_features&(1ULL<<VIRTIO_F_VERSION_1))){*(volatile u8 *)(virtio_common+0x14)=0;return 0;}
     /* ACCESS_PLATFORM is mandatory when QEMU routes this device through an
      * IOMMU; keep the negotiated set otherwise limited to split-ring support. */
-    u64 driver_features=(1ULL<<VIRTIO_F_VERSION_1)|(1ULL<<33)|(device_features&(1ULL<<9));
+    u64 driver_features=(1ULL<<VIRTIO_F_VERSION_1)|(1ULL<<VIRTIO_F_ACCESS_PLATFORM)|(device_features&(1ULL<<9));
     virtio_mmio32_write(virtio_common,0x08,0);virtio_mmio32_write(virtio_common,0x0c,(u32)driver_features);
     virtio_mmio32_write(virtio_common,0x08,1);virtio_mmio32_write(virtio_common,0x0c,(u32)(driver_features>>32));
     *(volatile u8 *)(virtio_common+0x14)=0x0b;
     if(!(*(volatile u8 *)(virtio_common+0x14)&0x08)){*(volatile u8 *)(virtio_common+0x14)=0;return 0;}
     virtio_mmio16_write(virtio_common,0x16,0);virtio_queue_size=virtio_mmio16(virtio_common,0x18);
-    if(virtio_queue_size<3||virtio_queue_size>256){*(volatile u8 *)(virtio_common+0x14)=0;return 0;}
+    if(!virtio_pci_queue_valid(virtio_queue_size)){*(volatile u8 *)(virtio_common+0x14)=0;return 0;}
     virtio_slots=virtio_queue_size/3;if(virtio_slots>VIRTIO_SLOTS)virtio_slots=VIRTIO_SLOTS;
     memset((void *)VIRTIO_RING,0,16384);virtio_mmio64_write(virtio_common,0x20,VIRTIO_RING);
     virtio_mmio64_write(virtio_common,0x28,VIRTIO_RING+16*virtio_queue_size);
     virtio_mmio64_write(virtio_common,0x30,VIRTIO_RING+virtio_pci_queue_bytes(virtio_queue_size));
-    virtio_mmio16_write(virtio_common,0x1c,1);virtio_modern=1;virtio_message_mode=0;virtio_irq_line=0;
+    virtio_mmio16_write(virtio_common,0x1c,1);virtio_modern=1;virtio_present=1;virtio_message_mode=0;virtio_irq_line=0;
     virtio_features=(u32)device_features;virtio_sectors=*(volatile u64 *)virtio_device_config;
     *(volatile u8 *)(virtio_common+0x14)=0x0f;
     storage_ipc_broker_init(&virtio_storage_broker,STORAGE_TASK,virtio_device,DMA_DOMAIN_STORAGE,virtio_sectors,SERVICE_CAP_STORAGE);

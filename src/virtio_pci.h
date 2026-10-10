@@ -7,6 +7,10 @@
 #define VIRTIO_PCI_CAP_ISR 3
 #define VIRTIO_PCI_CAP_DEVICE 4
 #define VIRTIO_F_VERSION_1 32
+#define VIRTIO_F_ACCESS_PLATFORM 33
+#define VIRTIO_PCI_DEVICE_NET 0x1041
+#define VIRTIO_PCI_DEVICE_BLOCK 0x1042
+#define VIRTIO_PCI_DEVICE_RNG 0x1044
 
 typedef struct {
     u8 type;
@@ -33,6 +37,15 @@ static int virtio_pci_capabilities_complete(const VirtioPciCapability *common,
 static u64 virtio_pci_queue_bytes(u16 queue_size) {
     u64 driver = 16ULL * queue_size + 4 + 2ULL * queue_size;
     return (driver + 4095) & ~4095ULL;
+}
+
+static int virtio_pci_modern_features_valid(u64 device, u64 driver) {
+    u64 required = (1ULL << VIRTIO_F_VERSION_1) | (1ULL << VIRTIO_F_ACCESS_PLATFORM);
+    return (device & required) == required && (driver & required) == required && !(driver & ~device);
+}
+
+static int virtio_pci_queue_valid(u16 queue_size) {
+    return queue_size >= 3 && queue_size <= 256 && virtio_pci_queue_bytes(queue_size) <= 0x10000;
 }
 
 #endif

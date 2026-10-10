@@ -77,8 +77,8 @@ def run(script, folder, disk='build/development.img', timeout=7200, cpus=4,
         '-drive', f'format=raw,file={target},if=none,id=development',
         '-device', 'intel-iommu,intremap=on,dma-translation=on,aw-bits=48', '-acpitable', f'file={folder/"qemu-dmar.bin"}',
         '-device', 'virtio-blk-pci,drive=development,disable-legacy=on,iommu_platform=on',
-        '-object', 'rng-builtin,id=rng0', '-device', 'virtio-rng-pci,rng=rng0,disable-modern=on',
-        *network, '-device', 'virtio-net-pci,netdev=net0,disable-modern=on',
+        '-object', 'rng-builtin,id=rng0', '-device', 'virtio-rng-pci,rng=rng0,disable-legacy=on,iommu_platform=on',
+        *network, '-device', 'virtio-net-pci,netdev=net0,disable-legacy=on,iommu_platform=on',
         '-serial', f'file:{logpath}', '-display', 'none',
         '-qmp', f'tcp:127.0.0.1:{port},server=on,wait=off']
     q = None
