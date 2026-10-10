@@ -19,17 +19,35 @@ static VirtioPciCapability net_notify_cap;
 static u8 net_tx_busy[256];
 static u8 net_notify_announced[2];
 static int net_tx_announced,net_rx_completion_announced;
+#if defined(AURORA_NET_TRACE)
+static u16 net_rx_reported_used;
+static u8 net_packets_reported;
+#endif
 volatile u64 net_interrupts,net_bad_descriptors,net_entropy_bytes,net_entropy_failures;
 static u64 ring_used(u64 base,u16 size){return (base+16*size+6+2*size+4095)&~4095ULL;}
 static void entropy_init(void){
+#if defined(AURORA_NET_TRACE)
+    serial("RNG: scanning VirtIO PCI devices\r\n");
+#endif
     for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
         u32 device=(bus<<16)|(slot<<11);if(pci_read(device,0)!=0x10051af4)continue;
-        if(!dma_assign_device(device,DMA_DOMAIN_ENTROPY))continue;entropy_device=device;
+#if defined(AURORA_NET_TRACE)
+        serial("RNG: VirtIO PCI device found bus=");hex(bus);serial(" slot=");hex(slot);serial("\r\n");
+#endif
+        if(!dma_assign_device(device,DMA_DOMAIN_ENTROPY)){
+#if defined(AURORA_NET_TRACE)
+            serial("RNG: DMA device assignment rejected\r\n");
+#endif
+            continue;}entropy_device=device;
         u32 bar=pci_read(device,0x10);if(!(bar&1)||bar>65535)continue;
         entropy_port=bar&~3U;pci_write16(device,4,(pci_read(device,4)&0xffff)|5);
         outb(entropy_port+18,0);outb(entropy_port+18,1);outb(entropy_port+18,3);io_write32(entropy_port+4,0);
         outw(entropy_port+14,0);entropy_size=io_read16(entropy_port+12);
-        if(!entropy_size||entropy_size>256){outb(entropy_port+18,128);return;}
+        if(!entropy_size||entropy_size>256){
+#if defined(AURORA_NET_TRACE)
+            serial("RNG: invalid queue size\r\n");
+#endif
+            outb(entropy_port+18,128);return;}
         memset((void *)RNG_RING,0,16384);*(u16 *)(RNG_RING+16*entropy_size)=1;
         io_write32(entropy_port+8,RNG_RING/4096);outb(entropy_port+18,7);entropy_ready=1;
         serial("RNG: VirtIO hardware entropy queue ready\r\n");return;
@@ -95,12 +113,24 @@ static void net_poll(void){
     net_reclaim_tx();if(!net_ready)return;
     volatile u16 *used=(void *)ring_used(NET_RX_RING,net_rx_size),*avail=(void *)(NET_RX_RING+16*net_rx_size);
     __atomic_thread_fence(__ATOMIC_ACQUIRE);
+#if defined(AURORA_NET_TRACE)
+    if(net_modern&&used[1]!=net_rx_reported_used){serial("NET: modern RX used=");hex(used[1]);serial(" avail=");hex(avail[1]);serial("\r\n");net_rx_reported_used=used[1];}
+#endif
     if((u16)(used[1]-net_rx_used)>net_rx_size){net_bad_descriptors++;net_ready=0;return;}
     unsigned budget=64;int notify=0;
     while(net_rx_used!=used[1]&&budget--){volatile u32 *entry=(void *)((u64)used+4+8*(net_rx_used%net_rx_size));
-        u32 id=entry[0],length=entry[1];if(id>=net_rx_size){net_bad_descriptors++;net_ready=0;return;}
+        u32 id=entry[0],length=entry[1];
+#if defined(AURORA_NET_TRACE)
+        if(net_modern){serial("NET: modern RX used entry id=");hex(id);serial(" length=");hex(length);serial(" buffer=");hex(NET_RX_DATA+(u64)id*NET_BUFFER);serial("\r\n");}
+#endif
+        if(id>=net_rx_size){net_bad_descriptors++;net_ready=0;return;}
         u8 *buffer=(void *)(NET_RX_DATA+id*NET_BUFFER);
-        if(length>=24&&length<=1528&&!buffer[0]&&!buffer[1])network_input(buffer+10,length-10);else net_bad_descriptors++;
+        if(length>=24&&length<=1528&&!buffer[0]&&!buffer[1]){
+#if defined(AURORA_NET_TRACE)
+            if(net_modern&&net_packets_reported<8){serial("NET: packet parsed length=");hex(length-10);serial(" ethertype=");hex(((u16)buffer[12]<<8)|buffer[13]);serial("\r\n");net_packets_reported++;}
+#endif
+            network_input(buffer+10,length-10);
+        }else net_bad_descriptors++;
         if (net_modern&&!net_rx_completion_announced) { serial("NET: modern RX completion queue=0\r\n");net_rx_completion_announced=1; }
         net_rx_used++;avail[2+net_rx_avail%net_rx_size]=id;net_rx_avail++;notify=1;
     }
@@ -138,6 +168,9 @@ static int virtio_net_modern_init(u32 device){
     u64 common_bar=virtio_bar(device,common.bar),notify_bar=virtio_bar(device,notify.bar),config_bar=virtio_bar(device,config.bar);
     if(!common_bar||!notify_bar||!config_bar)return 0;
     if(!dma_assign_device(device,DMA_DOMAIN_NET))return 0;net_device=device;
+#if defined(AURORA_NET_TRACE)
+    serial("NET: modern DMA device assigned\r\n");
+#endif
     pci_write16(device,4,(pci_read(device,4)&0xffff)|5);
     net_common=common_bar+common.offset;net_notify_bar=notify_bar;net_device_config=config_bar+config.offset;
     net_notify_cap=notify;net_modern=1;net_port=0;net_irq_mode=0;net_irq_line=0;
@@ -158,6 +191,15 @@ static int virtio_net_modern_init(u32 device){
     VirtioDescriptor *d=(void *)NET_RX_RING;volatile u16 *avail=(void *)(NET_RX_RING+16*net_rx_size);
     for(u16 i=0;i<net_rx_size;i++){d[i]=(VirtioDescriptor){NET_RX_DATA+i*NET_BUFFER,NET_BUFFER,2,0};avail[2+i]=i;}
     net_rx_avail=net_rx_size;__atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=net_rx_avail;*(volatile u8 *)(net_common+0x14)=0x0f;net_ready=1;net_notify_queue(0);network_init(mac);
+#if defined(AURORA_NET_TRACE)
+    serial("NET: modern RX descriptors published queue=0 size=");hex(net_rx_size);serial(" avail=");hex(net_rx_avail);serial(" ring=");hex(NET_RX_RING);serial(" data=");hex(NET_RX_DATA);serial("\r\n");
+#endif
+    if(!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_RING,0x10000,DMA_READ|DMA_WRITE)||!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_DATA,0x100000,DMA_READ|DMA_WRITE)){
+#if defined(AURORA_NET_TRACE)
+        serial("NET: modern RX DMA mapping rejected\r\n");
+#endif
+        *(volatile u8 *)(net_common+0x14)=0;return 0;
+    }
     serial("NET: modern VirtIO-net queue ready\r\n");return 1;
 }
 static void virtio_net_init(void){

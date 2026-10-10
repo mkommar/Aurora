@@ -42,7 +42,7 @@ def boot():
         '-no-reboot','-vga','std','-drive',f'format=raw,file={folder}/aurora.img,if=ide,index=0',
         '-drive',f'format=raw,file={folder}/toolchain.img,'+('if=none,id=development' if args.virtio else 'if=ide,index=1'),
         *(['-device','virtio-blk-pci,drive=development,disable-modern=on'] if args.virtio else []),
-        '-serial',f'file:{folder}/serial.log','-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0'+(',vectors=0' if args.intx else ''),'-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on','-display','none',
+        '-serial',f'file:{folder}/serial.log','-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0,disable-legacy=on,iommu_platform=on'+(',vectors=0' if args.intx else ''),'-object','rng-builtin,id=rng0','-device','virtio-rng-pci,rng=rng0,disable-modern=on','-trace',f'events={Path("qemu-network-trace-events").resolve()},file={folder / "qemu-trace.log"}','-display','none',
         '-qmp',f'tcp:127.0.0.1:{args.qmp_port},server=on,wait=off'],creationflags=subprocess.CREATE_NO_WINDOW,stderr=(folder/'qemu-stderr.log').open('w'))
     deadline=time.monotonic()+45
     while True:
