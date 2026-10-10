@@ -109,7 +109,7 @@ int aurora_net_transmit(const void *packet,unsigned length){
 static void net_poll(void){
     if(!net_ready)return;
     if(!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_RING,0x10000,DMA_READ|DMA_WRITE) ||
-       !dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_DATA,0x100000,DMA_READ|DMA_WRITE)) { net_ready=0; return; }
+       !dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_DATA,0x80000,DMA_READ|DMA_WRITE)) { net_ready=0; return; }
     net_reclaim_tx();if(!net_ready)return;
     volatile u16 *used=(void *)ring_used(NET_RX_RING,net_rx_size),*avail=(void *)(NET_RX_RING+16*net_rx_size);
     __atomic_thread_fence(__ATOMIC_ACQUIRE);
@@ -194,7 +194,7 @@ static int virtio_net_modern_init(u32 device){
 #if defined(AURORA_NET_TRACE)
     serial("NET: modern RX descriptors published queue=0 size=");hex(net_rx_size);serial(" avail=");hex(net_rx_avail);serial(" ring=");hex(NET_RX_RING);serial(" data=");hex(NET_RX_DATA);serial("\r\n");
 #endif
-    if(!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_RING,0x10000,DMA_READ|DMA_WRITE)||!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_DATA,0x100000,DMA_READ|DMA_WRITE)){
+    if(!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_RING,0x10000,DMA_READ|DMA_WRITE)||!dma_validate(net_device,DMA_DOMAIN_NET,NET_RX_DATA,0x80000,DMA_READ|DMA_WRITE)){
 #if defined(AURORA_NET_TRACE)
         serial("NET: modern RX DMA mapping rejected\r\n");
 #endif
