@@ -13,7 +13,12 @@ static u16 entropy_port,entropy_size,entropy_avail,entropy_used;
 static int net_ready,net_irq_mode,entropy_ready,net_announced;
 static u32 net_device,entropy_device;
 static u32 net_irq_line;
+static int net_modern;
+static u64 net_common,net_notify_bar,net_device_config;
+static VirtioPciCapability net_notify_cap;
 static u8 net_tx_busy[256];
+static u8 net_notify_announced[2];
+static int net_tx_announced,net_rx_completion_announced;
 volatile u64 net_interrupts,net_bad_descriptors,net_entropy_bytes,net_entropy_failures;
 static u64 ring_used(u64 base,u16 size){return (base+16*size+6+2*size+4095)&~4095ULL;}
 static void entropy_init(void){
@@ -59,6 +64,17 @@ static void net_reclaim_tx(void){
         if(id>=net_tx_size||!net_tx_busy[id]){net_bad_descriptors++;net_ready=0;return;}
         net_tx_busy[id]=0;net_tx_used++;}
 }
+static void net_notify_queue(u16 queue){
+    u64 address;
+    if (net_modern) {
+        virtio_mmio16_write(net_common,0x16,queue);
+        address=virtio_pci_notify_address(&net_notify_cap,net_notify_bar,
+                                          virtio_mmio16(net_common,0x1e));
+        if (!address) { net_ready=0; return; }
+        if (!net_notify_announced[queue]) { serial("NET: modern notify queue=");hex(queue);serial(" address=");hex(address);serial("\r\n");net_notify_announced[queue]=1; }
+        *(volatile u16 *)address=0;
+    } else outw(net_port+16,queue);
+}
 int aurora_net_transmit(const void *packet,unsigned length){
     if(!net_ready||!entropy_ready||length>1518||length<14 ||
        !dma_validate(net_device,DMA_DOMAIN_NET,NET_TX_RING,0x10000,DMA_READ|DMA_WRITE) ||
@@ -68,7 +84,9 @@ int aurora_net_transmit(const void *packet,unsigned length){
     u8 *buffer=(void *)(NET_TX_DATA+id*NET_BUFFER);memset(buffer,0,10);memcpy(buffer+10,packet,length);
     VirtioDescriptor *d=(void *)NET_TX_RING;d[id]=(VirtioDescriptor){(u64)buffer,length+10,0,0};net_tx_busy[id]=1;
     volatile u16 *avail=(void *)(NET_TX_RING+16*net_tx_size);avail[2+net_tx_avail%net_tx_size]=id;
-    __atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=++net_tx_avail;__atomic_thread_fence(__ATOMIC_SEQ_CST);outw(net_port+16,1);return 1;
+    __atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=++net_tx_avail;
+    if (net_modern&&!net_tx_announced) { serial("NET: modern TX publication queue=1\r\n");net_tx_announced=1; }
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);net_notify_queue(1);return net_ready;
 }
 static void net_poll(void){
     if(!net_ready)return;
@@ -83,17 +101,70 @@ static void net_poll(void){
         u32 id=entry[0],length=entry[1];if(id>=net_rx_size){net_bad_descriptors++;net_ready=0;return;}
         u8 *buffer=(void *)(NET_RX_DATA+id*NET_BUFFER);
         if(length>=24&&length<=1528&&!buffer[0]&&!buffer[1])network_input(buffer+10,length-10);else net_bad_descriptors++;
+        if (net_modern&&!net_rx_completion_announced) { serial("NET: modern RX completion queue=0\r\n");net_rx_completion_announced=1; }
         net_rx_used++;avail[2+net_rx_avail%net_rx_size]=id;net_rx_avail++;notify=1;
     }
-    if(notify){__atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=net_rx_avail;__atomic_thread_fence(__ATOMIC_SEQ_CST);outw(net_port+16,0);}
+    if(notify){__atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=net_rx_avail;__atomic_thread_fence(__ATOMIC_SEQ_CST);net_notify_queue(0);}
     network_tick();if(!net_announced&&network_configured()){net_announced=1;serial("NET: DHCP IPv4 address, gateway and TCP/UDP ready\r\n");}
 }
 static void net_interrupt(u32 irq){
     if(!net_ready||(net_irq_mode?irq!=49:irq!=net_irq_line))return;
     if(!net_irq_mode&&!(inb(net_port+19)&3))return;net_interrupts++;
 }
+static int virtio_net_modern_capabilities(u32 device,VirtioPciCapability *common,
+                                           VirtioPciCapability *notify,
+                                           VirtioPciCapability *config){
+    u8 cap=pci_config8(device,0x34);int found=0;
+    for(int hops=0;cap>=0x40&&cap<=0xfc&&hops<48;hops++){
+        u32 value=pci_read(device,cap);u8 id=value&255,next=(value>>8)&0xff;
+        if(id==9){
+            u32 header=pci_read(device,cap+4);VirtioPciCapability *out=0;
+            u8 type=(value>>24)&0xff;
+            if(type==VIRTIO_PCI_CAP_COMMON)out=common;
+            if(type==VIRTIO_PCI_CAP_NOTIFY)out=notify;
+            if(type==VIRTIO_PCI_CAP_DEVICE)out=config;
+            if(out){out->type=type;out->bar=header&0xff;out->offset=pci_read(device,cap+8);
+                out->length=pci_read(device,cap+12);out->notify_multiplier=0;
+                if(type==VIRTIO_PCI_CAP_NOTIFY)out->notify_multiplier=pci_read(device,cap+16);
+                found++;}
+        }
+        if(next==cap)break;cap=next;
+    }
+    return found>=3&&virtio_pci_capabilities_complete(common,notify,config);
+}
+static int virtio_net_modern_init(u32 device){
+    VirtioPciCapability common={0},notify={0},config={0};
+    if(!virtio_net_modern_capabilities(device,&common,&notify,&config))return 0;
+    u64 common_bar=virtio_bar(device,common.bar),notify_bar=virtio_bar(device,notify.bar),config_bar=virtio_bar(device,config.bar);
+    if(!common_bar||!notify_bar||!config_bar)return 0;
+    if(!dma_assign_device(device,DMA_DOMAIN_NET))return 0;net_device=device;
+    pci_write16(device,4,(pci_read(device,4)&0xffff)|5);
+    net_common=common_bar+common.offset;net_notify_bar=notify_bar;net_device_config=config_bar+config.offset;
+    net_notify_cap=notify;net_modern=1;net_port=0;net_irq_mode=0;net_irq_line=0;
+    *(volatile u8 *)(net_common+0x14)=0;*(volatile u8 *)(net_common+0x14)=1;*(volatile u8 *)(net_common+0x14)=3;
+    u64 features=virtio_mmio32(net_common,0x04);virtio_mmio32_write(net_common,0x00,1);features|=(u64)virtio_mmio32(net_common,0x04)<<32;
+    if(!(features&(1ULL<<32))||!(features&(1ULL<<33))||!(features&(1ULL<<5))){*(volatile u8 *)(net_common+0x14)=0;return 0;}
+    virtio_mmio32_write(net_common,0x08,0);virtio_mmio32_write(net_common,0x0c,(1U<<5));
+    virtio_mmio32_write(net_common,0x08,1);virtio_mmio32_write(net_common,0x0c,3U);
+    *(volatile u8 *)(net_common+0x14)=0x0b;
+    if(!(*(volatile u8 *)(net_common+0x14)&8)){*(volatile u8 *)(net_common+0x14)=0;return 0;}
+    virtio_mmio16_write(net_common,0x16,0);net_rx_size=virtio_mmio16(net_common,0x18);
+    virtio_mmio16_write(net_common,0x16,1);net_tx_size=virtio_mmio16(net_common,0x18);
+    if(!net_rx_size||net_rx_size>256||!net_tx_size||net_tx_size>256){*(volatile u8 *)(net_common+0x14)=0;return 0;}
+    memset((void *)NET_RX_RING,0,16384);memset((void *)NET_TX_RING,0,16384);
+    virtio_mmio16_write(net_common,0x16,0);virtio_mmio64_write(net_common,0x20,NET_RX_RING);virtio_mmio64_write(net_common,0x28,NET_RX_RING+16*net_rx_size);virtio_mmio64_write(net_common,0x30,ring_used(NET_RX_RING,net_rx_size));virtio_mmio16_write(net_common,0x1c,1);
+    virtio_mmio16_write(net_common,0x16,1);virtio_mmio64_write(net_common,0x20,NET_TX_RING);virtio_mmio64_write(net_common,0x28,NET_TX_RING+16*net_tx_size);virtio_mmio64_write(net_common,0x30,ring_used(NET_TX_RING,net_tx_size));virtio_mmio16_write(net_common,0x1c,1);
+    u8 mac[6];for(int i=0;i<6;i++)mac[i]=*(volatile u8 *)(net_device_config+i);
+    VirtioDescriptor *d=(void *)NET_RX_RING;volatile u16 *avail=(void *)(NET_RX_RING+16*net_rx_size);
+    for(u16 i=0;i<net_rx_size;i++){d[i]=(VirtioDescriptor){NET_RX_DATA+i*NET_BUFFER,NET_BUFFER,2,0};avail[2+i]=i;}
+    net_rx_avail=net_rx_size;__atomic_thread_fence(__ATOMIC_RELEASE);avail[1]=net_rx_avail;*(volatile u8 *)(net_common+0x14)=0x0f;net_ready=1;net_notify_queue(0);network_init(mac);
+    serial("NET: modern VirtIO-net queue ready\r\n");return 1;
+}
 static void virtio_net_init(void){
     if(!entropy_ready)return;
+    for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
+        u32 modern=(bus<<16)|(slot<<11);if(pci_read(modern,0)==0x10411af4&&virtio_net_modern_init(modern))return;
+    }
     for(u32 bus=0;bus<256;bus++)for(u32 slot=0;slot<32;slot++){
         u32 device=(bus<<16)|(slot<<11);if(pci_read(device,0)!=0x10001af4)continue;
         if(!dma_assign_device(device,DMA_DOMAIN_NET))continue;net_device=device;
