@@ -162,9 +162,19 @@ removal. These are host transaction fixtures; they do not establish guest
 package evidence.
 The Make package's guest download/configure/build/package/install/smoke flow
 still requires a prepared development image with the bootstrap GNU tools and
-network access. No pinned Make 4.4.1 source archive is currently cached in the
-host workspace, and the latest host fetch attempt failed with `Network is
-unreachable`; a full guest Make package run has not yet been recorded.
+network access. The pinned Make 4.4.1 archive is now cached and verified in the
+GNU bootstrap inputs, but a full guest Make package run has not yet been
+recorded.
+
+The bootstrap prerequisite is now reproducible on Linux: the refreshed Alpine
+`linux-virt-6.18.55-r0.apk` and all GNU archives verify against
+`gnu-bootstrap.lock.json`, and `build-gnu-bootstrap.py` records
+`AURORA GNU BOOTSTRAP COMPLETE`. Native diffutils remains guest-unvalidated in
+this run. The IOMMU guest fixture itself passes Intel VT-d discovery and VirtIO
+boot, but the package runner reaches the Aurora desktop and then
+the transitional VirtIO network/entropy devices do not initialize, so no
+`NET: DHCP` marker appears. The runner times out before Bash or package build;
+no guest `.deb` or transaction result is claimed.
 
 The volume preparer refuses existing destinations and grows a **new copy** to
 8 GiB ext2, preserving the FAT32 exchange partition. A temporary Linux VM runs
@@ -190,8 +200,9 @@ python3 native-packages.py diffutils --mirror-cache build/native-mirror \
 
 The cache must contain the exact archive filename from
 `packages/sources.lock.json`; the runner verifies its SHA-256 before starting
-the HTTP server. QEMU forwards a loopback host port to guest `10.0.2.2:8080`,
-and the guest build uses that mirror instead of upstream internet. The mirror
+the HTTP server on the selected host port. The guest reaches it through
+QEMU's `10.0.2.2` host gateway at port 8080, and the guest build uses that
+mirror instead of upstream internet. The mirror
 does not create missing bootstrap or source inputs. `--retry` remains bounded
 to a resumed disposable disk and preserves failed build trees/logs; it does
 not reuse a failed source tree.

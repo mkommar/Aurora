@@ -34,8 +34,8 @@ or custom QEMU launch can forward a host port to a guest TCP listener; a guest
 client reaches that service at `10.0.2.2:<host-port>`.
 
 The native package runner uses the same bounded mechanism for a Linux-hosted
-source mirror. It binds the verified cache on loopback, adds a QEMU user-NAT
-`hostfwd` rule, and makes the mirror available to Aurora at
+source mirror. It binds the verified cache on a host service port and uses the
+QEMU user-NAT host gateway, making the mirror available to Aurora at
 `http://10.0.2.2:8080`. The server starts only after every requested archive
 matches the package source lock and refuses missing or mismatched files; it
 does not substitute host-built or placeholder inputs.

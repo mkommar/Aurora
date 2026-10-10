@@ -1,11 +1,11 @@
 """Build pinned GNU sources in an isolated QEMU Linux VM (1 GiB, no host install)."""
 from pathlib import Path
-import gzip,tarfile,stat,subprocess,threading,http.server,functools,time,base64
+import gzip,tarfile,stat,subprocess,threading,http.server,functools,time,base64,shutil
 ROOT=Path('tools/gnu-bootstrap').resolve()
 def initrd():
     # Kernel and modules come from the same pinned package.
     entries={'dev':(stat.S_IFDIR|0o755,b'',0,0),'dev/console':(stat.S_IFCHR|0o600,b'',5,1)}
-    with tarfile.open(ROOT/'linux-virt-6.18.52-r0.apk',ignore_zeros=True) as archive:
+    with tarfile.open(ROOT/'linux-virt-6.18.55-r0.apk',ignore_zeros=True) as archive:
         for m in archive:
             name=m.name.removeprefix('./').rstrip('/')
             if name=='boot/vmlinuz-virt':(ROOT/'vmlinuz-virt').write_bytes(archive.extractfile(m).read())
@@ -68,11 +68,12 @@ if __name__=='__main__':
     initrd(); (ROOT/'bootstrap-gnu.sh').write_bytes(Path('bootstrap-gnu.sh').read_bytes())
     server=http.server.ThreadingHTTPServer(('127.0.0.1',8879),functools.partial(Handler,directory=str(ROOT)))
     threading.Thread(target=server.serve_forever,daemon=True).start()
-    command=['tools/qemu/qemu-system-x86_64.exe','-machine','pc','-accel','whpx','-cpu','qemu64','-smp','2','-m','1G',
+    qemu=shutil.which('qemu-system-x86_64') or 'tools/qemu/qemu-system-x86_64.exe'
+    command=[qemu,'-machine','pc','-accel','tcg,thread=multi','-cpu','qemu64','-smp','2','-m','1G',
         '-kernel',str(ROOT/'vmlinuz-virt'),'-initrd',str(ROOT/'builder-initramfs.gz'),'-append','console=ttyS0 rdinit=/init panic=1',
         '-netdev','user,id=net0','-device','virtio-net-pci,netdev=net0','-display','none','-serial',f'file:{ROOT}/builder.log','-no-reboot']
     try:
-        process=subprocess.Popen(command,creationflags=subprocess.CREATE_NO_WINDOW)
+        process=subprocess.Popen(command,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         try:code=process.wait(timeout=7200)
         except BaseException:process.terminate();process.wait();raise
         log=(ROOT/'builder.log').read_text(errors='replace')
