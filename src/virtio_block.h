@@ -96,7 +96,7 @@ static int virtio_modern_block_init(u32 address){
     memset((void *)VIRTIO_RING,0,16384);virtio_mmio64_write(virtio_common,0x20,VIRTIO_RING);
     virtio_mmio64_write(virtio_common,0x28,VIRTIO_RING+16*virtio_queue_size);
     virtio_mmio64_write(virtio_common,0x30,VIRTIO_RING+virtio_pci_queue_bytes(virtio_queue_size));
-    virtio_mmio16_write(virtio_common,0x1c,1);virtio_modern=1;virtio_message_mode=0;virtio_irq_line=0;
+    virtio_mmio16_write(virtio_common,0x1c,1);virtio_modern=1;virtio_present=1;virtio_message_mode=0;virtio_irq_line=0;
     virtio_features=(u32)device_features;virtio_sectors=*(volatile u64 *)virtio_device_config;
     *(volatile u8 *)(virtio_common+0x14)=0x0f;
     storage_ipc_broker_init(&virtio_storage_broker,STORAGE_TASK,virtio_device,DMA_DOMAIN_STORAGE,virtio_sectors,SERVICE_CAP_STORAGE);
