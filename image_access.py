@@ -4,6 +4,11 @@ Reads reject writes; callers stage writes onto copies. Never formats a disk.
 import ctypes as C,struct,zlib,os,subprocess,tempfile
 from pathlib import Path, PurePosixPath
 
+EXECUTABLE_PATHS = {'/bin/curl','/bin/bash','/usr/bin/bash','/usr/bin/xz',
+                    '/lib/ld-musl-x86_64.so.1','/work/rebuild-network.sh',
+                    '/work/platform','/work/package-locks','/work/apt-repo-server',
+                    '/work/apt-repo-client'}
+
 def geometry(disk, lib):
     disk.seek(512);header=bytearray(disk.read(512));assert header[:8]==b'EFI PART'
     length,checksum=struct.unpack_from('<II',header,12);assert 92<=length<=512
@@ -69,7 +74,7 @@ def put_ext2_files(image,files):
                 payload=Path(temporary)/('payload-'+str(len(commands)))
                 payload.write_bytes(data)
                 commands.append(f'write {payload} {path}')
-                if path.endswith('.sh') or path in ('/bin/curl','/bin/bash','/usr/bin/bash','/lib/ld-musl-x86_64.so.1','/work/rebuild-network.sh','/work/platform','/work/package-locks','/work/apt-repo-server','/work/apt-repo-client'):
+                if path.endswith('.sh') or path in EXECUTABLE_PATHS:
                     commands.append(f'set_inode_field {path} mode 0100755')
             command_file=Path(temporary)/'debugfs.commands';command_file.write_text('\n'.join(commands)+'\n')
             subprocess.run(['debugfs','-w','-f',str(command_file),str(image)],check=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
@@ -107,7 +112,7 @@ def put_ext2_files(image,files):
                         error=lib.au_mkdir(name.encode())
                         if error not in (0,17):raise RuntimeError(f'ext2 mkdir {name}: error {error}')
                         directories.add(name)
-                executable=path.endswith('.sh') or path in ('/bin/curl','/bin/bash','/usr/bin/bash','/lib/ld-musl-x86_64.so.1','/work/rebuild-network.sh','/work/apt-repo-server','/work/apt-repo-client')
+                executable=path.endswith('.sh') or path in EXECUTABLE_PATHS
                 error=lib.au_put(path.encode(),data,len(data),0o755 if executable else 0o644)
                 if error:raise RuntimeError(f'ext2 image write {path}: error {error}')
         finally:check(lib.au_close())

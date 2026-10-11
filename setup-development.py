@@ -5,6 +5,7 @@ Uses the pinned lwext4 host image tool; never formats a physical drive.
 from pathlib import Path
 import argparse,ctypes as C,struct,tarfile,posixpath,zlib,uuid,os
 from development_image import write_gpt as deterministic_write_gpt
+from archive_paths import find_archive_member,normalize_archive_path
 p=argparse.ArgumentParser();p.add_argument('--image',default='build/development.img');p.add_argument('--gnu',action='store_true');p.add_argument('--partitioned',action='store_true');args=p.parse_args()
 target=Path(args.image);temporary=target.with_suffix('.img.partial')
 if target.exists() or temporary.exists():raise SystemExit('Refusing to overwrite an existing image or partial image')
@@ -82,7 +83,7 @@ with temporary.open('x+b') as disk:
         with tarfile.open('tools/gnu-bootstrap/gnu-bootstrap.tar.gz') as archive:
             members=archive.getmembers()
             for m in members:
-                path='/'+m.name.removeprefix('./').strip('/')
+                path='/'+normalize_archive_path(m.name)
                 if path=='/':continue
                 if m.isdir():mkdir(path)
                 elif m.isfile():put(path,archive.extractfile(m).read(),m.mode)
@@ -91,11 +92,11 @@ with temporary.open('x+b') as disk:
         for name in ('ar','ranlib','nm','objcopy','objdump','readelf','strip','size','strings','addr2line'):
             symlink('/usr/bin/'+name,'/x86_64-linux-musl/bin/'+name)
         with tarfile.open('tools/gnu-bootstrap/gnu-bootstrap.tar.gz') as outer:
-            member=next((m for m in outer if m.name.endswith('/make-configured.tar.gz')),None)
+            member=find_archive_member(outer.getmembers(),'make-configured.tar.gz')
             if member:
                 with tarfile.open(fileobj=outer.extractfile(member),mode='r:gz') as configured:
                     for m in configured:
-                        path='/work/'+m.name.strip('/')
+                        path='/work/'+normalize_archive_path(m.name)
                         if m.isdir():mkdir(path)
                         elif m.isfile():put(path,configured.extractfile(m).read(),m.mode)
                         elif m.issym():symlink(path,m.linkname)
