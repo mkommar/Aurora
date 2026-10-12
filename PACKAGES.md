@@ -212,6 +212,20 @@ guest package result still requires the prepared GNU bootstrap image and all
 of its locked inputs; a working source mirror does not replace that
 prerequisite.
 
+Long native transactions have a durable observability contract. The guest
+supervisor writes bounded JSON checkpoints under
+`/work/packages/state/<package>/`: `current.json` is the last state,
+`checkpoints.jsonl` is append-only history, `heartbeat` records stage, PID and
+requested job count, and `proc-status` records guest process status when
+`/proc` is available. `serial-tail.log` is a bounded live recipe-log tail.
+The host retains these under `state/`, plus `serial.tail` and `host-status`,
+after QEMU exits. Checkpoints cover image preparation, boot, network readiness,
+source fetch and verification, extraction, configure, compile, tests, package
+creation, install, lifecycle and recovery. `--stage-timeout` (1800 seconds by
+default) bounds a stale stage; `--timeout` remains the overall limit. Resume
+retains the disposable disk and evidence, and the existing source locks,
+IOMMU and DMA checks are unchanged.
+
 Only the bootstrap tools are initially available. Later recipes require their
 listed prerequisites to have been installed on the candidate. Passing a list of
 package names does not install dependencies automatically. Recipes beyond the

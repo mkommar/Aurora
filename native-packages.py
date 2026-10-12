@@ -5,12 +5,47 @@ No source archives or configure results are imported by this runner.
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shlex
+import threading
+import time
 from aurora_vm import run
 from image_access import read_ext2_files
 from native_package_mirror import NativePackageMirror
+from transaction_observability import tail, write_checkpoint
+
+
+def observe(folder, stop):
+    """Persist bounded host status while aurora_vm owns the QEMU process."""
+    folder = Path(folder)
+    state = folder / 'state'
+    state.mkdir(parents=True, exist_ok=True)
+    write_checkpoint(state, 'guest-boot', 'running', 'waiting for serial markers')
+    while not stop.is_set():
+        serial = folder / 'serial.log'
+        text = serial.read_text(errors='replace') if serial.exists() else ''
+        (folder / 'serial.tail').write_text(text[-4000:], encoding='utf-8')
+        qemu = []
+        for proc in Path('/proc').glob('[0-9]*'):
+            try:
+                command = (proc / 'cmdline').read_bytes().replace(b'\0', b' ').decode()
+                if 'qemu-system' in command:
+                    status = (proc / 'status').read_text(errors='replace')
+                    rss = next((line.split(':', 1)[1].strip() for line in status.splitlines()
+                                if line.startswith('VmRSS:')), 'unknown')
+                    qemu.append(f'pid={proc.name} rss={rss} cmd={command[:240]}')
+            except (OSError, UnicodeError):
+                pass
+        (folder / 'host-status').write_text(
+            f'updated={int(time.time())}\nserial_bytes={len(text)}\n'
+            f'cpus={os.cpu_count() or 1}\n' + '\n'.join(qemu) + '\n', encoding='utf-8')
+        if 'desktop ready' in text:
+            write_checkpoint(state, 'guest-boot', 'passed', 'desktop ready')
+        if 'NET: DHCP' in text:
+            write_checkpoint(state, 'network-readiness', 'passed', 'DHCP marker observed')
+        stop.wait(5)
 
 
 def harvest(folder,names):
@@ -34,7 +69,23 @@ def harvest(folder,names):
                 print(f'Artifact unavailable: {path}: {error}',flush=True)
 
 
-def payload(names,retry=False,mirror_url=''):
+def harvest_status(folder, disk, names):
+    """Copy bounded guest status out of the disposable disk after shutdown."""
+    destination = Path(folder) / 'state'
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        for suffix in ('current.json', 'last-observed.json', 'checkpoints.jsonl', 'heartbeat', 'proc-status', 'serial-tail.log'):
+            guest = f'/work/packages/state/{name}/{suffix}'
+            try:
+                data = read_ext2_files(disk, [guest])[guest]
+            except (OSError, RuntimeError, ValueError, AssertionError):
+                continue
+            target = destination / name
+            target.mkdir(parents=True, exist_ok=True)
+            (target / suffix).write_bytes(data[-1024 * 1024:])
+
+
+def payload(names,retry=False,mirror_url='',stage_timeout=1800):
     raw=Path('packages/sources.lock.json').read_bytes()
     lock=json.loads(raw)['packages']
     recipe=Path('packages/build.sh').read_bytes()
@@ -80,7 +131,7 @@ def payload(names,retry=False,mirror_url=''):
                 'while test -e "/work/packages/build/$stem.failed-$attempt"; do attempt=$((attempt+1)); done',
                 'for tree in build stage; do if test -e "/work/packages/$tree/$stem"; then mv "/work/packages/$tree/$stem" "/work/packages/$tree/$stem.failed-$attempt"; fi; done',
                 'if test -f /work/packages/logs/'+name+'.log; then mv /work/packages/logs/'+name+'.log "/work/packages/logs/'+name+'.failed-$attempt.log"; fi']
-        script+=['bash /work/packages/build.sh '+shlex.quote(name)]
+        script+=['AURORA_STAGE_TIMEOUT='+str(stage_timeout)+' bash /work/packages/build-observed.sh '+shlex.quote(name)]
     script+=['sync','echo AURORA_NATIVE_PACKAGES_COMPLETE']
     return files,'\n'.join(script)+'\n'
 
@@ -93,6 +144,8 @@ if __name__ == '__main__':
     parser.add_argument('--resume',action='store_true')
     parser.add_argument('--retry',action='store_true',help='preserve failed trees/logs and start a clean build on a resumed candidate')
     parser.add_argument('--timeout',type=int,default=14400)
+    parser.add_argument('--stage-timeout',type=int,default=1800,
+                        help='maximum seconds without a guest checkpoint update')
     parser.add_argument('--cpus',type=int,default=1)
     parser.add_argument('--port',type=int,default=4456)
     parser.add_argument('--mirror-cache',help='serve hash-verified source archives through QEMU NAT')
@@ -105,9 +158,19 @@ if __name__ == '__main__':
         mirror=NativePackageMirror(args.mirror_cache,source_lock,args.packages,args.mirror_port)
         mirror.start()
     mirror_url=mirror.guest_url(mirror.host_port) if mirror else ''
-    files,script=payload(args.packages,args.retry,mirror_url)
+    files,script=payload(args.packages,args.retry,mirror_url,args.stage_timeout)
     path=Path(args.folder);path.mkdir(parents=True,exist_ok=True)
     job=path/'job.sh';job.write_text(script,encoding='utf-8',newline='\n')
-    run(job,path,disk=args.disk,resume=args.resume,files=files,timeout=args.timeout,cpus=args.cpus,port=args.port,network_ready=True)
+    stop = threading.Event()
+    observer = threading.Thread(target=observe, args=(path, stop), daemon=True)
+    observer.start()
+    try:
+        run(job,path,disk=args.disk,resume=args.resume,files=files,timeout=args.timeout,cpus=args.cpus,port=args.port,network_ready=True)
+    finally:
+        stop.set()
+        observer.join(timeout=6)
     harvest(path,args.packages)
+    candidates = [item for item in Path(path).glob('*.img') if item.name != 'aurora.img']
+    if candidates:
+        harvest_status(path,candidates[0],args.packages)
     if mirror: mirror.stop()
