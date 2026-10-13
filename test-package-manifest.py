@@ -36,6 +36,7 @@ runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
 files,script=runner.payload(list(packages))
 assert not any(name.endswith(('.tar.gz','.tar.xz','.tgz')) for name in files)
 assert files['/work/packages-install.sh']==Path('packages/install.sh').read_bytes()
+assert files['/work/packages/build-observed.sh']==Path('packages/build-observed.sh').read_bytes()
 assert 'cp /work/packages-install.sh /work/packages/install.sh' in script
 assert '/work/packages/musl-0.patch' in files
 patch=files['/work/packages/musl-0.patch']

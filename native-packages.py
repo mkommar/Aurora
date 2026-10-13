@@ -93,6 +93,7 @@ def payload(names,retry=False,mirror_url='',stage_timeout=1800):
     recipe_digest=hashlib.sha256(recipe+b'\0'+install_recipe).hexdigest()
     files={'/work/packages-lock.json':raw,'/work/packages-build.sh':recipe}
     files['/work/packages-install.sh']=install_recipe
+    files['/work/packages/build-observed.sh']=Path('packages/build-observed.sh').read_bytes()
     files['/work/packages/repository.sh']=Path('packages/repository.sh').read_bytes()
     files['/etc/resolv.conf']=b'nameserver 10.0.2.3\noptions timeout:2 attempts:2\n'
     for filename in ('compiler-corpus.c','compiler-corpus.sh'):
