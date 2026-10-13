@@ -121,6 +121,7 @@ def payload(names,retry=False,mirror_url='',stage_timeout=1800):
         # Build dependencies are recorded separately; only explicitly declared
         # runtime dependencies become Debian Depends fields.
         env['depends']=', '.join('aurora-'+n for n in meta.get('runtime_dependencies',[]))
+        env['package_description']=meta.get('description',name)
         env['mirror_url']=mirror_url
         envtext=''.join(k+'='+shlex.quote(v)+'\n' for k,v in env.items())
         files['/work/package-'+name+'.env']=envtext.encode()

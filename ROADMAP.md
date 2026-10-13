@@ -146,10 +146,14 @@ configure results. See [NETWORK.md](NETWORK.md) for the networking scope.
       tree, release manifest, synthetic-fixture test and configurable Pages
       workflow are implemented; they publish supplied `.deb` files but do not
       mirror source archives. The Linux bootstrap builder now completes from
-      refreshed, hash-verified Alpine/GNU inputs. The guest diffutils run
+      refreshed, hash-verified Alpine/GNU inputs. The xz bootstrap has an
+      explicit static recipe mode, and a separately identified GCC 11.5.0
+      `libgcc_s` runtime package is defined for the existing
+      `x86_64-linux-musl` ABI. The guest diffutils/xz/libgcc-s runs
       remains blocked after IOMMU boot because current transitional VirtIO
       network/entropy support does not initialize with QEMU's IOMMU-capable
-      device path; no guest package result is claimed. The guest Make run is
+      device path; no guest package result is claimed for these new recipes.
+      The guest Make run is
       also pending the same network-device compatibility fix. Full dpkg/APT
       lifecycle behavior,
      guest build/install validation and authenticated release policy remain

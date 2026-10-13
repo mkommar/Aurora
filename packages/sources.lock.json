@@ -425,6 +425,23 @@
       "patches": [],
       "recipe": "gcc"
     },
+    "libgcc-s": {
+      "version": "11.5.0",
+      "archive": "gcc-11.5.0.tar.xz",
+      "url": "https://ftp.gnu.org/gnu/gcc/gcc-11.5.0/gcc-11.5.0.tar.xz",
+      "sha256": "a6e21868ead545cf87f0c01f84276e4b5281d672098591c1c896241f09363478",
+      "license": "GPL-3.0-or-later WITH GCC-exception-3.1",
+      "description": "GCC libgcc_s runtime for x86_64-linux-musl",
+      "target": "x86_64-linux-musl",
+      "build_dependencies": [
+        "bootstrap-gcc", "bootstrap-bash", "bootstrap-make",
+        "bootstrap-coreutils", "bootstrap-tar", "bootstrap-gzip",
+        "xz", "binutils", "gmp", "mpfr", "mpc", "bootstrap-g++"
+      ],
+      "patches": [],
+      "recipe": "gcc-runtime",
+      "runtime_files": ["/opt/aurora/lib/libgcc_s.so.1"]
+    },
     "musl": {
       "version": "1.2.2",
       "archive": "musl-1.2.2.tar.gz",
