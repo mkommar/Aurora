@@ -69,17 +69,35 @@ exec 3>&1
             make DESTDIR="$stage" install
             ;;
         diffutils)
-            LDFLAGS='-static' bash configure --prefix="$prefix" --disable-nls
-            make -j1
+            CFLAGS="${CFLAGS:-} -static" LDFLAGS="${LDFLAGS:-} -static -static-libgcc" \
+                bash configure --prefix="$prefix" --disable-nls --disable-shared --enable-static
+            CFLAGS="${CFLAGS:-} -static" LDFLAGS="${LDFLAGS:-} -static -static-libgcc" make -j1
             make check
             make DESTDIR="$stage" install
+            ;;
+        gcc-runtime)
+            mkdir obj; cd obj
+            bash ../configure --prefix="$prefix" --target=x86_64-linux-musl \
+                --disable-nls --disable-bootstrap --disable-multilib \
+                --enable-languages=c --disable-libquadmath --disable-libsanitizer \
+                --disable-libstdcxx --disable-libgomp --disable-libatomic \
+                --disable-libvtv --disable-libssp --disable-libada \
+                --with-gmp="$prefix" --with-mpfr="$prefix" --with-mpc="$prefix"
+            make -j1 all-target-libgcc
+            make DESTDIR="$stage" install-target-libgcc
+            runtime=$(find "$stage$prefix" -type f -name libgcc_s.so.1 -print -quit)
+            test -n "$runtime"
+            mkdir -p "$stage$prefix/lib"
+            cp "$runtime" "$stage$prefix/lib/libgcc_s.so.1"
+            find "$stage$prefix" -mindepth 1 -maxdepth 1 ! -name lib -exec rm -rf '{}' '+'
+            find "$stage$prefix/lib" -mindepth 1 ! -name libgcc_s.so.1 -exec rm -rf '{}' '+'
             ;;
         *)
             options=(--prefix="$prefix" --build=x86_64-linux-musl --host=x86_64-linux-musl)
             case "$name" in
                 make) options+=(--disable-nls --disable-load --without-guile);;
                 bash) options+=(--without-bash-malloc --disable-nls --disable-readline);;
-                xz) options+=(--disable-shared --disable-nls);;
+                xz) options+=(--disable-shared --enable-static --disable-nls);;
                 libmd|gmp|mpfr|mpc) options+=(--disable-shared --enable-static);;
                 dpkg) options+=(--disable-nls --disable-dselect --disable-start-stop-daemon \
                     --disable-update-alternatives --disable-devel-docs --without-libselinux \
@@ -91,13 +109,19 @@ exec 3>&1
                 python) options+=(--without-ensurepip --disable-shared);;
                 *) options+=(--disable-nls);;
             esac
+            recipe_cflags="${CFLAGS:-}"
+            recipe_ldflags="${LDFLAGS:-}"
+            if test "$name" = xz; then
+                recipe_cflags="$recipe_cflags -static"
+                recipe_ldflags="$recipe_ldflags -static -static-libgcc"
+            fi
             mkdir obj; cd obj
-            bash ../configure "${options[@]}"
+            CFLAGS="$recipe_cflags" LDFLAGS="$recipe_ldflags" bash ../configure "${options[@]}"
             if test "$recipe" = gcc; then
                 # Upstream bootstrap compares stage 2 and stage 3 before install.
                 make -j1 bootstrap
             else
-                make -j1
+                CFLAGS="$recipe_cflags" LDFLAGS="$recipe_ldflags" make -j1
             fi
             make DESTDIR="$stage" install
             ;;

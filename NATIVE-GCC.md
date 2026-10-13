@@ -122,6 +122,12 @@ GCC itself has not been rebuilt inside Aurora. Static and dynamic musl pthreads
 use shared VM and futex mechanisms and can execute on different CPUs; see
 [Thread validation](THREADS.md). The original compiler package remains GCC 11.2.1 with binutils 2.37.
 
+The package tree now has a separate GCC `libgcc_s` runtime recipe pinned to GCC
+11.5.0 and configured for `x86_64-linux-musl`. It is not a new
+`x86_64-aurora` target. The package installs a regular runtime file under
+`/opt/aurora/lib`; no loader configuration is claimed until a package-installed
+guest smoke test proves the supported search path.
+
 ## Tests and provenance
 
 ```powershell

@@ -40,6 +40,19 @@ successive package builds still needs testing. Build dependencies are recorded;
 runtime dependencies need to be audited per package before release. This runner
 is not a dependency solver.
 
+The xz and diffutils recipes use an explicit recipe-local static mode
+(`--disable-shared --enable-static` plus static libgcc/linker flags). No global
+package-build flag weakens dynamic packages. This keeps the compression
+bootstrap independent of `libgcc_s`.
+
+The `libgcc-s` entry is a separately identified GCC 11.5.0 runtime package. It
+builds only target libgcc for the existing `x86_64-linux-musl` ABI and packages
+the regular `/opt/aurora/lib/libgcc_s.so.1` file. Aurora's installer does not
+currently provide an ld.so cache, loader search-path configuration, or a
+supported `/lib` ownership transition, so this package does not claim that
+installing it alone enables dynamic loading. Existing dynamic guest tests stage
+their disposable `/lib` runtime independently.
+
 The diffutils entry is the reference GNU recipe for future m4 and related
 ports: add a verified source-lock record, list only prerequisites already
 available in the candidate image, add a dedicated `build.sh` case when the
@@ -79,8 +92,9 @@ comparator, not full Debian version semantics. This is not dpkg or APT.
 
 Local patches are SHA-256 pinned, verified before staging and again in Aurora,
 applied with GNU patch, and copied into the package's documentation. The musl
-entry records the existing fork-child TID-registration backport; the new musl
-package recipe has not yet completed its validation run.
+entry records the existing fork-child TID-registration backport. The new xz,
+static diffutils bootstrap mode, and libgcc-s runtime recipe require a guest
+build before promotion.
 
 Candidate packages use `/opt/aurora` and `musl-linux-amd64`, separate from the
 bootstrap tools. Stock Debian glibc packages are not compatible with this image.
